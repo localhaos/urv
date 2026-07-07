@@ -75,7 +75,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Cache Gradle and Android build state
         uses: actions/cache@v4
