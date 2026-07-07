@@ -1,0 +1,13 @@
+{
+  "stages": [
+    { "id": 1, "name": "STAGE_1", "label": "pre-clone", "resume_requires": [] },
+    { "id": 2, "name": "STAGE_2", "label": "clone", "resume_requires": [] },
+    { "id": 3, "name": "STAGE_3", "label": "post-clone", "resume_requires": ["WORK_DIR"] },
+    { "id": 4, "name": "STAGE_4", "label": "setup", "resume_requires": ["WORK_DIR"] },
+    { "id": 5, "name": "STAGE_5", "label": "mods", "resume_requires": ["WORK_DIR"] },
+    { "id": 6, "name": "STAGE_6", "label": "pre-build", "resume_requires": ["WORK_DIR"] },
+    { "id": 7, "name": "STAGE_7", "label": "build", "resume_requires": ["WORK_DIR", "gradlew"] },
+    { "id": 8, "name": "STAGE_8", "label": "post-build", "resume_requires": ["WORK_DIR"] },
+    { "id": 9, "name": "STAGE_9", "label": "collect", "resume_requires": ["WORK_DIR"] }
+  ]
+}
