@@ -130,7 +130,11 @@ jobs:
             --repo . \
             --build-ok build_ok \
             --out-dir out/saved-artifacts \
-            --manifest out/saved-artifacts/manifest.json
+            --manifest out/saved-artifacts/manifest.json \
+            --parallel 4 \
+            --timeout 35 \
+            --retries 2 \
+            --skip-existing
 
       - name: Locate APK
         id: apk
@@ -187,5 +191,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "sync: generated URV tree ${GITHUB_RUN_NUMBER}"
-          git remote add target "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote add target "https://github.com/${GITHUB_REPOSITORY}.git"
           git push --force target HEAD:"generated/${GITHUB_RUN_NUMBER}"
