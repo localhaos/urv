@@ -8,11 +8,14 @@ Accepted build_ok formats:
 - JSON list/object containing artifact ids.
 
 Downloaded ZIP files are stored under --out-dir and described in a JSON manifest.
+The downloader supports parallel execution and skip-existing to avoid repeatedly
+waiting on unchanged template/artifact ZIPs.
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import re
@@ -41,6 +44,8 @@ class Manifest:
     repository: str
     build_ok: str
     out_dir: str
+    parallel: int
+    timeout_seconds: int
     saved: list[SavedArtifact]
 
 
@@ -113,18 +118,31 @@ def request_with_redirect(url: str, token: str, accept: str = "application/vnd.g
     )
 
 
-def download_artifact_zip(repository: str, artifact_id: int, token: str, out_dir: Path, retries: int) -> SavedArtifact:
+def download_artifact_zip(
+    repository: str,
+    artifact_id: int,
+    token: str,
+    out_dir: Path,
+    retries: int,
+    timeout_seconds: int,
+    skip_existing: bool,
+) -> SavedArtifact:
     url = f"https://api.github.com/repos/{repository}/actions/artifacts/{artifact_id}/zip"
     out_path = out_dir / f"artifact-{artifact_id}.zip"
     last_error: str | None = None
 
+    if skip_existing and out_path.exists() and out_path.is_file() and out_path.stat().st_size > 0:
+        return SavedArtifact(artifact_id, str(out_path), out_path.stat().st_size, "cached")
+
     for attempt in range(1, retries + 1):
         try:
             req = request_with_redirect(url, token, accept="application/vnd.github+json")
-            with urllib.request.urlopen(req, timeout=90) as response:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
                 data = response.read()
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_path.write_bytes(data)
+            tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+            tmp.write_bytes(data)
+            tmp.replace(out_path)
             return SavedArtifact(artifact_id, str(out_path), len(data), "saved")
         except urllib.error.HTTPError as exc:
             last_error = f"HTTP {exc.code}: {exc.reason}"
@@ -151,7 +169,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--manifest", default="out/saved-artifacts/manifest.json")
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN"))
-    parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument("--retries", type=int, default=2)
+    parser.add_argument("--timeout", type=int, default=35, help="per-request timeout in seconds")
+    parser.add_argument("--parallel", type=int, default=4, help="parallel download workers")
+    parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--fail-on-error", action="store_true")
     args = parser.parse_args(argv)
 
@@ -164,6 +185,10 @@ def main(argv: list[str]) -> int:
         raise SystemExit("missing --token or GITHUB_TOKEN")
     if args.retries < 1:
         raise SystemExit("--retries must be >= 1")
+    if args.timeout < 5:
+        raise SystemExit("--timeout must be >= 5")
+    if args.parallel < 1:
+        raise SystemExit("--parallel must be >= 1")
 
     build_ok = resolve_inside(repo, args.build_ok)
     out_dir = resolve_inside(repo, args.out_dir)
@@ -171,23 +196,40 @@ def main(argv: list[str]) -> int:
 
     ids = parse_build_ok(build_ok)
     if not ids:
-        manifest = Manifest(args.repository, str(build_ok.relative_to(repo)), str(out_dir.relative_to(repo)), [])
+        manifest = Manifest(args.repository, str(build_ok.relative_to(repo)), str(out_dir.relative_to(repo)), args.parallel, args.timeout, [])
         write_manifest(manifest_path, manifest)
         log("no artifact ids in build_ok")
         return 0
 
     log(f"artifact ids from build_ok: {', '.join(map(str, ids))}")
-    saved = [download_artifact_zip(args.repository, artifact_id, args.token, out_dir, args.retries) for artifact_id in ids]
-    manifest = Manifest(args.repository, str(build_ok.relative_to(repo)), str(out_dir.relative_to(repo)), saved)
+    workers = min(args.parallel, len(ids))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(
+                download_artifact_zip,
+                args.repository,
+                artifact_id,
+                args.token,
+                out_dir,
+                args.retries,
+                args.timeout,
+                args.skip_existing,
+            )
+            for artifact_id in ids
+        ]
+        saved = [future.result() for future in futures]
+
+    saved.sort(key=lambda item: item.artifact_id)
+    manifest = Manifest(args.repository, str(build_ok.relative_to(repo)), str(out_dir.relative_to(repo)), args.parallel, args.timeout, saved)
     write_manifest(manifest_path, manifest)
 
     for item in saved:
-        if item.status == "saved":
-            log(f"saved artifact {item.artifact_id}: {item.path} ({item.bytes_written} bytes)")
+        if item.status in {"saved", "cached"}:
+            log(f"{item.status} artifact {item.artifact_id}: {item.path} ({item.bytes_written} bytes)")
         else:
             log(f"{item.status} artifact {item.artifact_id}: {item.error}")
 
-    if args.fail_on_error and any(item.status != "saved" for item in saved):
+    if args.fail_on_error and any(item.status not in {"saved", "cached"} for item in saved):
         return 2
     return 0
 
