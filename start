@@ -293,6 +293,20 @@ run_warning_autopatcher_from_log() {
   report_has_changes "${report_file}"
 }
 
+run_native_patcher_from_log() {
+  local log_file="$1"
+  local report_file="$2"
+  [[ "${NATIVE_PATCHER}" == "1" ]] || return 1
+  [[ -f "${ROOT_DIR}/init/tools/native_patcher.py" ]] || return 1
+  [[ -f "${log_file}" ]] || return 1
+  grep -Eq '\[CXX5106\]|NDK was located by using ndk\.dir|ndk\.dir|android\.ndkVersion|externalNativeBuild|CXX|NDK' "${log_file}" || return 1
+  python3 "${ROOT_DIR}/init/tools/native_patcher.py" \
+    --repo "${WORK_DIR}" \
+    --log "${log_file}" \
+    --report "${report_file}"
+  report_has_changes "${report_file}"
+}
+
 run_cmake_patcher_from_log() {
   local log_file="$1"
   local report_file="$2"
@@ -357,6 +371,7 @@ build_project() {
   local second_log="${log_dir}/gradle-build-2.log"
   local warning_report="${OUT_DIR}/warning-autopatch-from-log.json"
   local cmake_report="${OUT_DIR}/gradle-patcher-cmake-from-log.json"
+  local native_report="${OUT_DIR}/gradle-patcher-native-from-log.json"
   local resource_report="${OUT_DIR}/gradle-patcher-resource-from-log.json"
   local gradle_report="${OUT_DIR}/gradle-patcher-from-log.json"
 
@@ -366,6 +381,7 @@ build_project() {
   set -e
 
   local patched=1
+  run_native_patcher_from_log "${first_log}" "${native_report}" && patched=0 || true
   run_cmake_patcher_from_log "${first_log}" "${cmake_report}" && patched=0 || true
   run_resource_fixer_from_log "${first_log}" "${resource_report}" && patched=0 || true
   run_gradle_patcher_from_log "${first_log}" "${gradle_report}" && patched=0 || true
