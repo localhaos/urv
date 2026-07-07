@@ -76,18 +76,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Cache Gradle and Android build state
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            ~/.android/build-cache
-            .work/upstream/.gradle
-          key: urv-gradle-${{ runner.os }}-${{ hashFiles('init/**/*.yml', 'init/**/*.yaml', 'init/**/*.py', 'init/**/*.sh') }}
-          restore-keys: |
-            urv-gradle-${{ runner.os }}-
-
       - name: Setup Android SDK packages
         shell: bash
         run: |
