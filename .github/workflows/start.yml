@@ -100,19 +100,20 @@ jobs:
             find "$ANDROID_HOME" -maxdepth 5 -type f -name sdkmanager -print >&2 || true
             exit 2
           fi
-          rm -rf "${ANDROID_HOME}/cmdline-tools/latest-2" "${ANDROID_HOME}/cmdline-tools/latest-3" || true
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" \
+          find "${ANDROID_HOME}/cmdline-tools" -mindepth 1 -maxdepth 1 -type d -name 'latest-*' -exec rm -rf '{}' + || true
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
             "platform-tools" \
             "platforms;android-35" \
             "platforms;android-36" \
             "build-tools;35.0.1" \
             "cmake;3.22.1" \
             "ndk;25.2.9519653"
-          rm -rf "${ANDROID_HOME}/cmdline-tools/latest-2" "${ANDROID_HOME}/cmdline-tools/latest-3" || true
+          find "${ANDROID_HOME}/cmdline-tools" -mindepth 1 -maxdepth 1 -type d -name 'latest-*' -exec rm -rf '{}' + || true
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          "$SDKMANAGER" --list_installed | sed -n '1,140p'
+          find "${ANDROID_HOME}/cmdline-tools" -mindepth 1 -maxdepth 1 -type d -print | sort
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --list_installed | sed -n '1,140p'
 
       - name: Setup Python patch dependencies
         shell: bash
