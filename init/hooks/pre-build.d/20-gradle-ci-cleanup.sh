@@ -31,6 +31,35 @@ def append_gradle_property(path: Path, key: str, value: str) -> None:
 # Fix hard CI failure: upstream checks project.hasProperty("signAsDebug").
 append_gradle_property(repo / 'gradle.properties', 'signAsDebug', 'true')
 
+# Add default resources for localized-only legacy string names before AAPT/shrinker runs.
+strings_xml = repo / 'app/src/main/res/values/strings.xml'
+if strings_xml.exists():
+    text = strings_xml.read_text(encoding='utf-8')
+    original = text
+    defaults = {
+        'bundle_update_banner_collapsed': 'Updating patch bundles • %1$d out of %2$d',
+        'bundle_update_banner_title': 'Updating patch bundles',
+        'bundle_update_progress': '%1$d/%2$d bundles processed',
+        'original_revanced_manager_github': 'Original ReVanced Manager GitHub',
+        'selected_apps_count': '%d apps selected',
+    }
+    additions = []
+    for name, value in defaults.items():
+        if f'name="{name}"' not in text:
+            additions.append(f'    <string name="{name}">{value}</string>')
+    if additions:
+        marker = '</resources>'
+        if marker not in text:
+            fail('default strings.xml has no closing resources tag')
+        text = text.replace(marker, '\n'.join(additions) + '\n' + marker, 1)
+        strings_xml.write_text(text, encoding='utf-8')
+        log('patched default localized-only strings: ' + ', '.join(defaults.keys()))
+    for name in defaults:
+        if f'name="{name}"' not in text:
+            fail(f'missing default resource after patch: {name}')
+else:
+    fail('app/src/main/res/values/strings.xml missing; cannot patch default resources')
+
 # Fix Kotlin/AGP publication warning for :api release component.
 api = repo / 'api' / 'build.gradle.kts'
 if api.exists():
