@@ -1,0 +1,52 @@
+version: 1
+
+# Copy complete files/directories from init/overlays into the cloned upstream.
+# Source paths are resolved relative to this repository root unless absolute.
+overlays: []
+# Example:
+# overlays:
+#   - id: replace-app-icon
+#     enabled: true
+#     source: init/overlays/app/src/main/res/mipmap-hdpi/ic_launcher.png
+#     target: app/src/main/res/mipmap-hdpi/ic_launcher.png
+#     mode: replace
+
+# Deterministic patches. Disabled examples document supported strategies.
+patches:
+  - id: example-literal-disabled
+    enabled: false
+    target: README.md
+    strategy: literal
+    find: "Universal ReVanced Manager"
+    replace: "Universal ReVanced Manager - LocalHaos"
+    count: 1
+
+  - id: example-regex-disabled
+    enabled: false
+    target: app/build.gradle.kts
+    strategy: regex
+    find: 'versionName\s*=\s*"[^"]+"'
+    replace: 'versionName = "0.0.${GITHUB_RUN_NUMBER}"'
+    count: 1
+
+  - id: example-marker-disabled
+    enabled: false
+    target: app/src/main/AndroidManifest.xml
+    strategy: marker
+    begin: "<!-- LOCALHAOS-BEGIN -->"
+    end: "<!-- LOCALHAOS-END -->"
+    replace: |
+      <!-- LOCALHAOS-BEGIN -->
+      <!-- replacement block -->
+      <!-- LOCALHAOS-END -->
+    include_markers: true
+
+  - id: example-function-disabled
+    enabled: false
+    target: app/src/main/java/example/Example.kt
+    strategy: function
+    name: "exampleFunction"
+    replace: |
+      fun exampleFunction(): String {
+          return "patched"
+      }
