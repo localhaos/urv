@@ -64,6 +64,7 @@ jobs:
       VINEFLOWER_VERSION: ${{ inputs.vineflower_version || '1.12.0' }}
       RUN_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.run_build == false && '0' || '1' }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      EW_API_TOKEN: ${{ secrets.EW_API_TOKEN }}
 
     steps:
       - name: Checkout bootstrap repository
@@ -120,10 +121,10 @@ jobs:
           printf 'APK=%s\nTEST_APK=%s\n' "$apk" "$test_apk"
 
       - name: Optional emulator.wtf tests
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_emulator_wtf == true && secrets.EW_API_TOKEN != '' && steps.apk.outputs.apk != '' && steps.apk.outputs.test_apk != '' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_emulator_wtf == true && env.EW_API_TOKEN != '' && steps.apk.outputs.apk != '' && steps.apk.outputs.test_apk != '' }}
         uses: emulator-wtf/actions/run-tests@v1.0.0
         with:
-          api-token: ${{ secrets.EW_API_TOKEN }}
+          api-token: ${{ env.EW_API_TOKEN }}
           app: ${{ steps.apk.outputs.apk }}
           test: ${{ steps.apk.outputs.test_apk }}
           outputs-dir: out/emulator-wtf
