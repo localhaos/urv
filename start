@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_CONFIG="${ROOT_DIR}/init/config/default.env"
+CONFIG_FILE="${URV_CONFIG:-${DEFAULT_CONFIG}}"
+
+if [[ -f "${CONFIG_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${CONFIG_FILE}"
+fi
+
+UPSTREAM_REPO="${1:-${UPSTREAM_REPO:-https://github.com/Jman-Github/universal-revanced-manager.git}}"
+UPSTREAM_REF="${2:-${UPSTREAM_REF:-${BRANCH_ID:-main}}}"
+WORK_DIR="${WORK_DIR:-${ROOT_DIR}/.work/upstream}"
+OUT_DIR="${OUT_DIR:-${ROOT_DIR}/out}"
+PATCH_MANIFEST="${PATCH_MANIFEST:-${ROOT_DIR}/init/mods.yml}"
+GRADLE_TASK="${GRADLE_TASK:-assembleRelease}"
+RUN_BUILD="${RUN_BUILD:-1}"
+RUN_MODS="${RUN_MODS:-1}"
+
+case "${WORK_DIR}" in /*) ;; *) WORK_DIR="${ROOT_DIR}/${WORK_DIR}" ;; esac
+case "${OUT_DIR}" in /*) ;; *) OUT_DIR="${ROOT_DIR}/${OUT_DIR}" ;; esac
+case "${PATCH_MANIFEST}" in /*) ;; *) PATCH_MANIFEST="${ROOT_DIR}/${PATCH_MANIFEST}" ;; esac
+
+log() {
+  printf '[URV] %s\n' "$*"
+}
+
+die() {
+  printf '[URV][ERR] %s\n' "$*" >&2
+  exit 1
+}
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
+}
+
+run_hooks() {
+  local stage="$1"
+  local hook_dir="${ROOT_DIR}/init/hooks/${stage}.d"
+
+  [[ -d "${hook_dir}" ]] || return 0
+
+  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK RUN_BUILD RUN_MODS
+
+  shopt -s nullglob
+  local hook
+  for hook in "${hook_dir}"/*; do
+    [[ -f "${hook}" ]] || continue
+    case "${hook}" in
+      *.sh)
+        log "hook:${stage}: $(basename "${hook}")"
+        bash "${hook}"
+        ;;
+      *)
+        if [[ -x "${hook}" ]]; then
+          log "hook:${stage}: $(basename "${hook}")"
+          "${hook}"
+        fi
+        ;;
+    esac
+  done
+  shopt -u nullglob
+}
+
+clone_upstream() {
+  rm -rf "${WORK_DIR}"
+  mkdir -p "$(dirname "${WORK_DIR}")"
+
+  log "clone: ${UPSTREAM_REPO} @ ${UPSTREAM_REF}"
+
+  if git clone --depth 1 --branch "${UPSTREAM_REF}" "${UPSTREAM_REPO}" "${WORK_DIR}"; then
+    return 0
+  fi
+
+  log "branch clone failed; trying generic clone + checkout"
+  git clone --depth 1 "${UPSTREAM_REPO}" "${WORK_DIR}"
+  git -C "${WORK_DIR}" fetch --depth 1 origin "${UPSTREAM_REF}" || die "Cannot fetch ref: ${UPSTREAM_REF}"
+  git -C "${WORK_DIR}" checkout --detach FETCH_HEAD
+}
+
+setup_project() {
+  log "setup project"
+  mkdir -p "${OUT_DIR}"
+
+  if [[ -n "${ANDROID_HOME:-}" || -n "${ANDROID_SDK_ROOT:-}" ]]; then
+    local sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+    printf 'sdk.dir=%s\n' "${sdk}" > "${WORK_DIR}/local.properties"
+  fi
+
+  if [[ -f "${WORK_DIR}/gradlew" ]]; then
+    chmod +x "${WORK_DIR}/gradlew"
+  fi
+
+  if [[ -f "${WORK_DIR}/gradlew" ]]; then
+    (cd "${WORK_DIR}" && ./gradlew --version >/dev/null)
+  fi
+}
+
+apply_mods() {
+  [[ "${RUN_MODS}" == "1" ]] || {
+    log "mods disabled"
+    return 0
+  }
+
+  [[ -f "${PATCH_MANIFEST}" ]] || {
+    log "manifest missing: ${PATCH_MANIFEST}; skipping mods"
+    return 0
+  }
+
+  need_cmd python3
+  if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    log "install PyYAML"
+    python3 -m pip install --user 'PyYAML>=6.0,<7.0'
+  fi
+
+  log "apply mods: ${PATCH_MANIFEST}"
+  python3 "${ROOT_DIR}/init/tools/apply_mods.py" \
+    --repo "${WORK_DIR}" \
+    --manifest "${PATCH_MANIFEST}" \
+    --root "${ROOT_DIR}"
+}
+
+build_project() {
+  [[ "${RUN_BUILD}" == "1" ]] || {
+    log "build disabled"
+    return 0
+  }
+
+  if [[ ! -f "${WORK_DIR}/gradlew" ]]; then
+    log "no gradlew detected; skipping Gradle build"
+    return 0
+  fi
+
+  log "gradle: ${GRADLE_TASK}"
+  (cd "${WORK_DIR}" && ./gradlew clean "${GRADLE_TASK}" --stacktrace)
+}
+
+collect_outputs() {
+  log "collect outputs"
+  rm -rf "${OUT_DIR}"
+  mkdir -p "${OUT_DIR}"
+
+  if [[ -d "${WORK_DIR}/app/build/outputs" ]]; then
+    mkdir -p "${OUT_DIR}/app-build-outputs"
+    cp -a "${WORK_DIR}/app/build/outputs/." "${OUT_DIR}/app-build-outputs/"
+  fi
+
+  if [[ -d "${WORK_DIR}/build/outputs" ]]; then
+    mkdir -p "${OUT_DIR}/root-build-outputs"
+    cp -a "${WORK_DIR}/build/outputs/." "${OUT_DIR}/root-build-outputs/"
+  fi
+
+  git -C "${WORK_DIR}" rev-parse HEAD > "${OUT_DIR}/upstream-commit.txt" 2>/dev/null || true
+  {
+    printf 'UPSTREAM_REPO=%s\n' "${UPSTREAM_REPO}"
+    printf 'UPSTREAM_REF=%s\n' "${UPSTREAM_REF}"
+    printf 'GRADLE_TASK=%s\n' "${GRADLE_TASK}"
+    printf 'RUN_BUILD=%s\n' "${RUN_BUILD}"
+    printf 'RUN_MODS=%s\n' "${RUN_MODS}"
+  } > "${OUT_DIR}/build-meta.env"
+
+  tar -C "${WORK_DIR}" \
+    --exclude='.git' \
+    --exclude='.gradle' \
+    --exclude='build' \
+    --exclude='*/build' \
+    -czf "${OUT_DIR}/modified-source.tar.gz" .
+}
+
+main() {
+  need_cmd git
+  need_cmd tar
+
+  run_hooks pre-clone
+  clone_upstream
+  run_hooks post-clone
+
+  run_hooks pre-setup
+  setup_project
+  run_hooks post-setup
+
+  run_hooks pre-mods
+  apply_mods
+  run_hooks post-mods
+
+  run_hooks pre-build
+  build_project
+  run_hooks post-build
+
+  run_hooks pre-upload
+  collect_outputs
+  run_hooks post-upload
+
+  log "done: ${OUT_DIR}"
+}
+
+main "$@"
