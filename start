@@ -19,6 +19,7 @@ GRADLE_TASK="${GRADLE_TASK:-assembleDebug}"
 GRADLE_BOOTSTRAP_ARGS="${GRADLE_BOOTSTRAP_ARGS:--PsignAsDebug}"
 CMAKE_PATCHER="${CMAKE_PATCHER:-1}"
 NATIVE_PATCHER="${NATIVE_PATCHER:-1}"
+RESOURCE_FIXER="${RESOURCE_FIXER:-1}"
 GRADLE_PATCHER="${GRADLE_PATCHER:-${GRADLE_AUTOFIX:-1}}"
 GRADLE_AUTOFIX="${GRADLE_AUTOFIX:-${GRADLE_PATCHER}}"
 WARNING_AUTOPATCH="${WARNING_AUTOPATCH:-1}"
@@ -50,7 +51,7 @@ run_hooks() {
 
   [[ -d "${hook_dir}" ]] || return 0
 
-  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS CMAKE_PATCHER NATIVE_PATCHER GRADLE_PATCHER GRADLE_AUTOFIX WARNING_AUTOPATCH WARNING_AUTOPATCH_RETRY WARNING_AUTOPATCH_STRICT RUN_BUILD RUN_MODS
+  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS CMAKE_PATCHER NATIVE_PATCHER RESOURCE_FIXER GRADLE_PATCHER GRADLE_AUTOFIX WARNING_AUTOPATCH WARNING_AUTOPATCH_RETRY WARNING_AUTOPATCH_STRICT RUN_BUILD RUN_MODS
 
   shopt -s nullglob
   local hook
@@ -187,6 +188,20 @@ run_cmake_patcher_from_log() {
   report_has_changes "${report_file}"
 }
 
+run_resource_fixer_from_log() {
+  local log_file="$1"
+  local report_file="$2"
+  [[ "${RESOURCE_FIXER}" == "1" ]] || return 1
+  [[ -f "${ROOT_DIR}/init/tools/patcher_resource_fixer.py" ]] || return 1
+  [[ -f "${log_file}" ]] || return 1
+  grep -Eiq 'without required default value|Android resource linking failed|AAPT:|aapt2|error: resource|res/values' "${log_file}" || return 1
+  python3 "${ROOT_DIR}/init/tools/patcher_resource_fixer.py" \
+    --repo "${WORK_DIR}" \
+    --log "${log_file}" \
+    --report "${report_file}"
+  report_has_changes "${report_file}"
+}
+
 run_gradle_patcher_from_log() {
   local log_file="$1"
   local report_file="$2"
@@ -223,6 +238,7 @@ build_project() {
   local second_log="${log_dir}/gradle-build-2.log"
   local warning_report="${OUT_DIR}/warning-autopatch-from-log.json"
   local cmake_report="${OUT_DIR}/gradle-patcher-cmake-from-log.json"
+  local resource_report="${OUT_DIR}/gradle-patcher-resource-from-log.json"
   local gradle_report="${OUT_DIR}/gradle-patcher-from-log.json"
 
   set +e
@@ -232,6 +248,7 @@ build_project() {
 
   local patched=1
   run_cmake_patcher_from_log "${first_log}" "${cmake_report}" && patched=0 || true
+  run_resource_fixer_from_log "${first_log}" "${resource_report}" && patched=0 || true
   run_gradle_patcher_from_log "${first_log}" "${gradle_report}" && patched=0 || true
   run_warning_autopatcher_from_log "${first_log}" "${warning_report}" && patched=0 || true
 
@@ -301,6 +318,7 @@ collect_outputs() {
     printf 'GRADLE_BOOTSTRAP_ARGS=%s\n' "${GRADLE_BOOTSTRAP_ARGS}"
     printf 'CMAKE_PATCHER=%s\n' "${CMAKE_PATCHER}"
     printf 'NATIVE_PATCHER=%s\n' "${NATIVE_PATCHER}"
+    printf 'RESOURCE_FIXER=%s\n' "${RESOURCE_FIXER}"
     printf 'GRADLE_PATCHER=%s\n' "${GRADLE_PATCHER}"
     printf 'GRADLE_AUTOFIX=%s\n' "${GRADLE_AUTOFIX}"
     printf 'WARNING_AUTOPATCH=%s\n' "${WARNING_AUTOPATCH}"
