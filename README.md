@@ -8,7 +8,7 @@ Main entrypoint:
 
 ```bash
 ./start
-./start https://github.com/Jman-Github/universal-revanced-manager.git main
+./start https://github.com/Jman-Github/universal-revanced-manager.git dev
 ./start https://github.com/MorpheApp/morphe-cli.git branchid
 ```
 
@@ -16,7 +16,7 @@ When no repository or branch/ref is provided, the bootstrap uses:
 
 ```text
 UPSTREAM_REPO=https://github.com/Jman-Github/universal-revanced-manager.git
-UPSTREAM_REF=main
+UPSTREAM_REF=dev
 ```
 
 ## Layout
@@ -29,6 +29,25 @@ init/mods.yml                 overlay / patch manifest
 init/overlays/                complete files copied into upstream checkout
 init/hooks/<stage>.d/*.sh     update-resistant hook points
 init/tools/apply_mods.py      deterministic patch engine
+init/tools/urvm_workarounds.py URVM-specific source workarounds
+```
+
+## URVM workarounds
+
+`init/hooks/post-mods.d/20-urvm-app-list-and-update-workarounds.sh` runs
+after generic overlays/patches and applies `init/tools/urvm_workarounds.py`.
+
+Current workarounds:
+
+```text
+1. Patch PM.appList so the app selector does not collapse to an empty list while
+   bundle metadata is empty, disabled, loading or transiently broken.
+2. Inject PreferencesManager into PM and use disableUniversalPatchCheck as the
+   switch for installed-app universal fallback.
+3. Expose all bundle metadata through bundleInfoFlow for UI reads while keeping
+   enabledBundlesInfoFlow available for strict patching/version logic.
+4. Make optional runtime modules conditional in settings.gradle.kts when the
+   upstream branch does not ship the same module set.
 ```
 
 ## Patch model
@@ -70,7 +89,7 @@ Important inputs:
 
 ```text
 upstream_repo          upstream Git URL; empty means default
-branch_id              branch, tag or commit; empty means main
+branch_id              branch, tag or commit; empty means dev
 gradle_task            default: assembleRelease
 run_build              whether to run Gradle build
 run_emulator_wtf       optional emulator.wtf test step
