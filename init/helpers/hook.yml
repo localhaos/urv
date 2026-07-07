@@ -1,0 +1,20 @@
+# Hook helper. Put scripts into one of:
+# init/hooks/pre-clone.d/*.sh
+# init/hooks/post-clone.d/*.sh
+# init/hooks/pre-setup.d/*.sh
+# init/hooks/post-setup.d/*.sh
+# init/hooks/pre-mods.d/*.sh
+# init/hooks/post-mods.d/*.sh
+# init/hooks/pre-build.d/*.sh
+# init/hooks/post-build.d/*.sh
+# init/hooks/pre-upload.d/*.sh
+# init/hooks/post-upload.d/*.sh
+
+stage: post-clone
+script: init/hooks/post-clone.d/20-my-change.sh
+environment:
+  - ROOT_DIR
+  - WORK_DIR
+  - OUT_DIR
+  - UPSTREAM_REPO
+  - UPSTREAM_REF
