@@ -15,7 +15,8 @@ UPSTREAM_REF="${2:-${UPSTREAM_REF:-${BRANCH_ID:-main}}}"
 WORK_DIR="${WORK_DIR:-${ROOT_DIR}/.work/upstream}"
 OUT_DIR="${OUT_DIR:-${ROOT_DIR}/out}"
 PATCH_MANIFEST="${PATCH_MANIFEST:-${ROOT_DIR}/init/mods.yml}"
-GRADLE_TASK="${GRADLE_TASK:-assembleRelease}"
+GRADLE_TASK="${GRADLE_TASK:-assembleDebug}"
+GRADLE_BOOTSTRAP_ARGS="${GRADLE_BOOTSTRAP_ARGS:--PsignAsDebug}"
 RUN_BUILD="${RUN_BUILD:-1}"
 RUN_MODS="${RUN_MODS:-1}"
 
@@ -42,7 +43,7 @@ run_hooks() {
 
   [[ -d "${hook_dir}" ]] || return 0
 
-  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK RUN_BUILD RUN_MODS
+  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS RUN_BUILD RUN_MODS
 
   shopt -s nullglob
   local hook
@@ -133,8 +134,14 @@ build_project() {
     return 0
   fi
 
-  log "gradle: ${GRADLE_TASK}"
-  (cd "${WORK_DIR}" && ./gradlew clean "${GRADLE_TASK}" --stacktrace)
+  local -a extra_args=()
+  if [[ -n "${GRADLE_BOOTSTRAP_ARGS}" ]]; then
+    # shellcheck disable=SC2206
+    extra_args=( ${GRADLE_BOOTSTRAP_ARGS} )
+  fi
+
+  log "gradle: ${GRADLE_TASK} ${extra_args[*]:-}"
+  (cd "${WORK_DIR}" && ./gradlew clean "${GRADLE_TASK}" "${extra_args[@]}" --stacktrace)
 }
 
 collect_outputs() {
@@ -157,6 +164,7 @@ collect_outputs() {
     printf 'UPSTREAM_REPO=%s\n' "${UPSTREAM_REPO}"
     printf 'UPSTREAM_REF=%s\n' "${UPSTREAM_REF}"
     printf 'GRADLE_TASK=%s\n' "${GRADLE_TASK}"
+    printf 'GRADLE_BOOTSTRAP_ARGS=%s\n' "${GRADLE_BOOTSTRAP_ARGS}"
     printf 'RUN_BUILD=%s\n' "${RUN_BUILD}"
     printf 'RUN_MODS=%s\n' "${RUN_MODS}"
   } > "${OUT_DIR}/build-meta.env"
