@@ -17,7 +17,8 @@ OUT_DIR="${OUT_DIR:-${ROOT_DIR}/out}"
 PATCH_MANIFEST="${PATCH_MANIFEST:-${ROOT_DIR}/init/mods.yml}"
 GRADLE_TASK="${GRADLE_TASK:-assembleDebug}"
 GRADLE_BOOTSTRAP_ARGS="${GRADLE_BOOTSTRAP_ARGS:--PsignAsDebug}"
-GRADLE_AUTOFIX="${GRADLE_AUTOFIX:-1}"
+GRADLE_PATCHER="${GRADLE_PATCHER:-${GRADLE_AUTOFIX:-1}}"
+GRADLE_AUTOFIX="${GRADLE_AUTOFIX:-${GRADLE_PATCHER}}"
 WARNING_AUTOPATCH="${WARNING_AUTOPATCH:-1}"
 WARNING_AUTOPATCH_RETRY="${WARNING_AUTOPATCH_RETRY:-1}"
 WARNING_AUTOPATCH_STRICT="${WARNING_AUTOPATCH_STRICT:-0}"
@@ -47,7 +48,7 @@ run_hooks() {
 
   [[ -d "${hook_dir}" ]] || return 0
 
-  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS GRADLE_AUTOFIX WARNING_AUTOPATCH WARNING_AUTOPATCH_RETRY WARNING_AUTOPATCH_STRICT RUN_BUILD RUN_MODS
+  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS GRADLE_PATCHER GRADLE_AUTOFIX WARNING_AUTOPATCH WARNING_AUTOPATCH_RETRY WARNING_AUTOPATCH_STRICT RUN_BUILD RUN_MODS
 
   shopt -s nullglob
   local hook
@@ -170,14 +171,14 @@ run_warning_autopatcher_from_log() {
   report_has_changes "${report_file}"
 }
 
-run_gradle_autofixer_from_log() {
+run_gradle_patcher_from_log() {
   local log_file="$1"
   local report_file="$2"
-  [[ "${GRADLE_AUTOFIX}" == "1" ]] || return 1
-  [[ -f "${ROOT_DIR}/init/tools/gradle_build_autofixer.py" ]] || return 1
+  [[ "${GRADLE_PATCHER}" == "1" ]] || return 1
+  [[ -f "${ROOT_DIR}/init/tools/gradle_patcher.py" ]] || return 1
   [[ -f "${log_file}" ]] || return 1
   grep -Eq '^[ew]: file://|Deprecated Gradle features|Observed package id|without required default value' "${log_file}" || return 1
-  python3 "${ROOT_DIR}/init/tools/gradle_build_autofixer.py" \
+  python3 "${ROOT_DIR}/init/tools/gradle_patcher.py" \
     --repo "${WORK_DIR}" \
     --log "${log_file}" \
     --report "${report_file}"
@@ -205,7 +206,7 @@ build_project() {
   local first_log="${log_dir}/gradle-build-1.log"
   local second_log="${log_dir}/gradle-build-2.log"
   local warning_report="${OUT_DIR}/warning-autopatch-from-log.json"
-  local gradle_report="${OUT_DIR}/gradle-autofix-from-log.json"
+  local gradle_report="${OUT_DIR}/gradle-patcher-from-log.json"
 
   set +e
   run_gradle_once "first" "${first_log}" ./gradlew clean "${GRADLE_TASK}" "${extra_args[@]}" --stacktrace
@@ -213,23 +214,23 @@ build_project() {
   set -e
 
   local patched=1
-  run_gradle_autofixer_from_log "${first_log}" "${gradle_report}" && patched=0 || true
+  run_gradle_patcher_from_log "${first_log}" "${gradle_report}" && patched=0 || true
   run_warning_autopatcher_from_log "${first_log}" "${warning_report}" && patched=0 || true
 
   if [[ "${patched}" == "0" && "${WARNING_AUTOPATCH_RETRY}" == "1" ]]; then
-    log "autofixer changed source; retrying Gradle once"
+    log "gradle patcher changed source; retrying Gradle once"
     set +e
     run_gradle_once "retry" "${second_log}" ./gradlew "${GRADLE_TASK}" "${extra_args[@]}" --stacktrace
     local retry_status=$?
     set -e
     if [[ "${WARNING_AUTOPATCH_STRICT}" == "1" ]] && grep -Eq '^[we]: file://' "${second_log}"; then
-      die "diagnostics remain after autofix retry; see ${second_log}"
+      die "diagnostics remain after Gradle patcher retry; see ${second_log}"
     fi
     return "${retry_status}"
   fi
 
   if [[ "${WARNING_AUTOPATCH_STRICT}" == "1" ]] && grep -Eq '^[we]: file://' "${first_log}"; then
-    die "diagnostics remain and autofix made no changes; see ${first_log}"
+    die "diagnostics remain and Gradle patcher made no changes; see ${first_log}"
   fi
 
   return "${first_status}"
@@ -246,7 +247,7 @@ collect_outputs() {
   local report_backup="$(mktemp -d)"
   shopt -s nullglob
   local report
-  for report in "${OUT_DIR}"/*autopatch*.json "${OUT_DIR}"/*autofix*.json; do
+  for report in "${OUT_DIR}"/*autopatch*.json "${OUT_DIR}"/*autofix*.json "${OUT_DIR}"/*gradle-patcher*.json; do
     [[ -f "${report}" ]] || continue
     cp "${report}" "${report_backup}/$(basename "${report}")"
   done
@@ -280,6 +281,7 @@ collect_outputs() {
     printf 'UPSTREAM_REF=%s\n' "${UPSTREAM_REF}"
     printf 'GRADLE_TASK=%s\n' "${GRADLE_TASK}"
     printf 'GRADLE_BOOTSTRAP_ARGS=%s\n' "${GRADLE_BOOTSTRAP_ARGS}"
+    printf 'GRADLE_PATCHER=%s\n' "${GRADLE_PATCHER}"
     printf 'GRADLE_AUTOFIX=%s\n' "${GRADLE_AUTOFIX}"
     printf 'WARNING_AUTOPATCH=%s\n' "${WARNING_AUTOPATCH}"
     printf 'WARNING_AUTOPATCH_RETRY=%s\n' "${WARNING_AUTOPATCH_RETRY}"
