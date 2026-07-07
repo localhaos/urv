@@ -88,15 +88,27 @@ jobs:
           restore-keys: |
             urv-gradle-${{ runner.os }}-
 
-      - name: Setup Android SDK tools
-        uses: maxim-lobanov/setup-android-tools@v1
-        with:
-          packages: |
-            platform-tools
-            build-tools;35.0.0
-            platforms;android-35
-            cmdline-tools;latest
-          cache: true
+      - name: Setup Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?ANDROID_HOME is not set on this runner}"
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            echo "sdkmanager not found at: $SDKMANAGER" >&2
+            find "$ANDROID_HOME" -maxdepth 5 -type f -name sdkmanager -print >&2 || true
+            exit 2
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "cmdline-tools;latest" \
+            "platforms;android-35" \
+            "platforms;android-36" \
+            "build-tools;35.0.1" \
+            "ndk;25.2.9519653"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          "$SDKMANAGER" --list_installed | sed -n '1,120p'
 
       - name: Setup Python patch dependencies
         shell: bash
