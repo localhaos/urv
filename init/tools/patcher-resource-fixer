@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Command alias for patcher_resource_fixer.py."""
+
+from __future__ import annotations
+
+import runpy
+import sys
+from pathlib import Path
+
+TOOL = Path(__file__).with_name("patcher_resource_fixer.py")
+if not TOOL.exists():
+    raise SystemExit(f"missing canonical resource fixer: {TOOL}")
+
+sys.argv[0] = str(TOOL)
+runpy.run_path(str(TOOL), run_name="__main__")
