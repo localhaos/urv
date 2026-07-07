@@ -13,12 +13,29 @@ from pathlib import Path
 
 WARN_RE = re.compile(r"^w: file://(?P<path>.*?):(?P<line>\d+):(?P<col>\d+) (?P<msg>.*)$")
 
+REPORT_ONLY_WARNING_PARTS = (
+    "Unnecessary safe call",
+    "Unnecessary non-null assertion",
+    "Elvis operator (?:) always returns",
+    "when' is exhaustive so 'else' is redundant",
+    "when is exhaustive so 'else' is redundant",
+)
+
 
 @dataclass
 class Change:
     path: str
     rule: str
     detail: str
+
+
+@dataclass
+class ReportOnly:
+    path: str
+    line: int
+    col: int
+    message: str
+    reason: str
 
 
 def log(message: str) -> None:
@@ -54,7 +71,7 @@ subprojects {
     }
 }
 '''
-    if marker not in text:
+    if marker not in text and "-Xannotation-default-target=param-property" not in text:
         text = text.rstrip() + "\n" + block
     write_if_changed(build, original, text, changes, "kotlin-compiler-arg", "add -Xannotation-default-target=param-property", repo)
 
@@ -93,7 +110,7 @@ def patch_known_deprecations(repo: Path, changes: list[Change]) -> None:
         text = read_text(source)
         original = text
 
-        text = text.replace("Looper.prepareMainLooper()", 'if (Looper.myLooper() == null) {\n                Looper::class.java.getDeclaredMethod("prepareMainLooper").invoke(null)\n            }')
+        text = text.replace("Looper.prepareMainLooper()", "Looper.prepare()")
         text = text.replace("consumePositionChange()", "consume()")
         for icon_name in ("Sort", "List", "OpenInNew"):
             text = patch_auto_mirrored_icon(text, icon_name)
@@ -124,100 +141,41 @@ def patch_known_deprecations(repo: Path, changes: list[Change]) -> None:
         write_if_changed(source, original, text, changes, "known-kotlin-deprecations", "known API/Compose substitutions", repo)
 
 
-def line_index(text: str, line_no: int) -> tuple[list[str], int] | None:
-    lines = text.splitlines(keepends=True)
-    idx = line_no - 1
-    if idx < 0 or idx >= len(lines):
-        return None
-    return lines, idx
-
-
-def replace_near(line: str, needle: str, replacement: str, col: int, radius: int = 16) -> tuple[str, bool]:
-    start = max(0, col - radius - 1)
-    end = min(len(line), col + radius - 1)
-    pos = line.find(needle, start, end)
-    if pos < 0:
-        pos = line.find(needle)
-    if pos < 0:
-        return line, False
-    return line[:pos] + replacement + line[pos + len(needle):], True
-
-
-def remove_simple_elvis(line: str, col: int) -> tuple[str, bool]:
-    pos = line.find("?:", max(0, col - 12))
-    if pos < 0:
-        pos = line.find("?:")
-    if pos < 0:
-        return line, False
-    tail = line[pos:]
-    if any(token in tail for token in ["{", "}", "->"]):
-        return line, False
-    patched = line[:pos].rstrip() + "\n"
-    return patched, True
-
-
-def apply_log_warning(repo: Path, path: Path, line_no: int, col: int, msg: str, changes: list[Change]) -> None:
-    if not path.exists() or path.suffix != ".kt":
-        return
-    text = read_text(path)
-    item = line_index(text, line_no)
-    if item is None:
-        return
-    lines, idx = item
-    line = lines[idx]
-    patched = line
-    ok = False
-    rule = ""
-
-    if "Unnecessary safe call" in msg:
-        patched, ok = replace_near(line, "?.", ".", col)
-        rule = "remove-unnecessary-safe-call"
-    elif "Unnecessary non-null assertion" in msg:
-        patched, ok = replace_near(line, "!!", "", col)
-        rule = "remove-unnecessary-non-null-assertion"
-    elif "Elvis operator (?:) always returns" in msg:
-        patched, ok = remove_simple_elvis(line, col)
-        rule = "remove-redundant-elvis"
-    elif "No cast needed" in msg:
-        patched = re.sub(r"\s+as\??\s+[A-Za-z0-9_.<>?]+", "", line, count=1)
-        ok = patched != line
-        rule = "remove-redundant-cast"
-    elif "when' is exhaustive so 'else' is redundant" in msg or "when is exhaustive so 'else' is redundant" in msg:
-        patched = re.sub(r"\s*else\s*->.*", "", line)
-        ok = patched != line
-        rule = "remove-redundant-when-else"
-    else:
-        return
-
-    if not ok:
-        return
-    lines[idx] = patched
-    after = "".join(lines)
-    write_if_changed(path, text, after, changes, rule, msg, repo)
-
-
-def apply_log_driven_rules(repo: Path, log_path: Path | None, changes: list[Change]) -> None:
+def apply_log_driven_rules(repo: Path, log_path: Path | None, report_only: list[ReportOnly]) -> None:
     if log_path is None or not log_path.exists():
         return
     for raw in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
         match = WARN_RE.match(raw.strip())
         if not match:
             continue
+        msg = match.group("msg")
+        if not any(part in msg for part in REPORT_ONLY_WARNING_PARTS):
+            continue
         path = Path(match.group("path"))
         if not path.is_absolute():
             continue
         try:
             rel = path.resolve().relative_to(repo)
+            display_path = str(rel)
         except ValueError:
-            continue
-        apply_log_warning(repo, repo / rel, int(match.group("line")), int(match.group("col")), match.group("msg"), changes)
+            display_path = str(path)
+        report_only.append(ReportOnly(
+            path=display_path,
+            line=int(match.group("line")),
+            col=int(match.group("col")),
+            message=msg,
+            reason="generic nullable/syntax rewrite disabled; requires AST-safe/manual fix",
+        ))
 
 
-def write_report(path: Path | None, changes: list[Change]) -> None:
+def write_report(path: Path | None, changes: list[Change], report_only: list[ReportOnly]) -> None:
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([asdict(change) for change in changes], indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(json.dumps({
+        "changed": [asdict(change) for change in changes],
+        "report_only": [asdict(item) for item in report_only],
+    }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def main(argv: list[str]) -> int:
@@ -232,16 +190,21 @@ def main(argv: list[str]) -> int:
         raise SystemExit(f"repo does not exist: {repo}")
 
     changes: list[Change] = []
+    report_only: list[ReportOnly] = []
     ensure_kotlin_annotation_default_target(repo, changes)
     patch_known_deprecations(repo, changes)
-    apply_log_driven_rules(repo, args.log, changes)
-    write_report(args.report, changes)
+    apply_log_driven_rules(repo, args.log, report_only)
+    write_report(args.report, changes, report_only)
 
     if changes:
         log(f"changed {len(changes)} item(s)")
         for change in changes[:40]:
             log(f"{change.rule}: {change.path} :: {change.detail}")
-    else:
+    if report_only:
+        log(f"report-only warnings: {len(report_only)}")
+        for item in report_only[:40]:
+            log(f"report-only: {item.path}:{item.line}:{item.col} :: {item.message}")
+    if not changes and not report_only:
         log("no changes")
     return 0
 
