@@ -14,7 +14,7 @@ on:
       gradle_task:
         description: 'Gradle task to run when build is enabled.'
         required: false
-        default: 'assembleRelease'
+        default: 'assembleDebug'
       vineflower_version:
         description: 'Vineflower Maven version injected into Gradle catalog.'
         required: false
@@ -60,7 +60,7 @@ jobs:
     env:
       UPSTREAM_REPO: ${{ inputs.upstream_repo || 'https://github.com/Jman-Github/universal-revanced-manager.git' }}
       UPSTREAM_REF: ${{ inputs.branch_id || 'dev' }}
-      GRADLE_TASK: ${{ inputs.gradle_task || 'assembleRelease' }}
+      GRADLE_TASK: ${{ inputs.gradle_task || 'assembleDebug' }}
       VINEFLOWER_VERSION: ${{ inputs.vineflower_version || '1.12.0' }}
       RUN_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.run_build == false && '0' || '1' }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -109,7 +109,7 @@ jobs:
           chmod +x ./start
           ./start "$UPSTREAM_REPO" "$UPSTREAM_REF"
 
-      - name: Locate release APK
+      - name: Locate APK
         id: apk
         shell: bash
         run: |
