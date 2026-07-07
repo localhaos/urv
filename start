@@ -17,6 +17,10 @@ OUT_DIR="${OUT_DIR:-${ROOT_DIR}/out}"
 PATCH_MANIFEST="${PATCH_MANIFEST:-${ROOT_DIR}/init/mods.yml}"
 GRADLE_TASK="${GRADLE_TASK:-assembleDebug}"
 GRADLE_BOOTSTRAP_ARGS="${GRADLE_BOOTSTRAP_ARGS:--PsignAsDebug}"
+START_STAGE="${START_STAGE:-${RESUME_STAGE:-STAGE_1}}"
+STOP_AFTER_STAGE="${STOP_AFTER_STAGE:-${STOP_STAGE:-STAGE_9}}"
+ARTIFACTS_APPROVED="${ARTIFACTS_APPROVED:-${APPROVED_ARTIFACTS:-0}}"
+HIJACKING_OVERLAY="${HIJACKING_OVERLAY:-1}"
 CMAKE_PATCHER="${CMAKE_PATCHER:-1}"
 NATIVE_PATCHER="${NATIVE_PATCHER:-1}"
 RESOURCE_FIXER="${RESOURCE_FIXER:-1}"
@@ -32,6 +36,9 @@ case "${WORK_DIR}" in /*) ;; *) WORK_DIR="${ROOT_DIR}/${WORK_DIR}" ;; esac
 case "${OUT_DIR}" in /*) ;; *) OUT_DIR="${ROOT_DIR}/${OUT_DIR}" ;; esac
 case "${PATCH_MANIFEST}" in /*) ;; *) PATCH_MANIFEST="${ROOT_DIR}/${PATCH_MANIFEST}" ;; esac
 
+STAGES_DIR="${ROOT_DIR}/init/STAGES"
+APPROVED_ARTIFACTS_MANIFEST="${APPROVED_ARTIFACTS_MANIFEST:-${OUT_DIR}/approved-artifacts.env}"
+
 log() {
   printf '[URV] %s\n' "$*"
 }
@@ -45,13 +52,103 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
 }
 
+parse_stage() {
+  local raw="${1:-1}"
+  raw="${raw^^}"
+  raw="${raw#STAGE_}"
+  raw="${raw#0}"
+  [[ -n "${raw}" ]] || raw="0"
+  [[ "${raw}" =~ ^[0-9]+$ ]] || die "Invalid stage value: $1"
+  local n=$((10#${raw}))
+  (( n >= 1 && n <= 9 )) || die "Stage out of range 1..9: $1"
+  printf '%s\n' "${n}"
+}
+
+START_STAGE_NUM="$(parse_stage "${START_STAGE}")"
+STOP_STAGE_NUM="$(parse_stage "${STOP_AFTER_STAGE}")"
+(( START_STAGE_NUM <= STOP_STAGE_NUM )) || die "START_STAGE must be <= STOP_AFTER_STAGE"
+
+stage_name() {
+  printf 'STAGE_%s' "$1"
+}
+
+stage_label() {
+  case "$1" in
+    1) printf 'pre-clone' ;;
+    2) printf 'clone' ;;
+    3) printf 'post-clone' ;;
+    4) printf 'setup' ;;
+    5) printf 'mods' ;;
+    6) printf 'pre-build' ;;
+    7) printf 'build' ;;
+    8) printf 'post-build' ;;
+    9) printf 'collect' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+approval_manifest_ok() {
+  [[ -f "${APPROVED_ARTIFACTS_MANIFEST}" ]] || return 1
+  grep -Eq '^APPROVED=(1|true|yes)$' "${APPROVED_ARTIFACTS_MANIFEST}"
+}
+
+artifacts_approved() {
+  [[ "${ARTIFACTS_APPROVED}" =~ ^(1|true|yes)$ ]] && return 0
+  approval_manifest_ok
+}
+
+validate_resume_gate() {
+  if (( START_STAGE_NUM > 1 )); then
+    artifacts_approved || die "Refusing resume from $(stage_name "${START_STAGE_NUM}"): set ARTIFACTS_APPROVED=1 or create ${APPROVED_ARTIFACTS_MANIFEST} with APPROVED=1"
+  fi
+  if (( START_STAGE_NUM >= 3 )); then
+    [[ -d "${WORK_DIR}" ]] || die "Cannot resume from $(stage_name "${START_STAGE_NUM}"): WORK_DIR missing: ${WORK_DIR}"
+  fi
+  if (( START_STAGE_NUM >= 7 )); then
+    [[ -x "${WORK_DIR}/gradlew" ]] || die "Cannot resume from $(stage_name "${START_STAGE_NUM}"): gradlew missing/not executable in ${WORK_DIR}"
+  fi
+}
+
+write_stage_status() {
+  local n="$1"
+  local state="$2"
+  local label
+  label="$(stage_label "${n}")"
+  mkdir -p "${OUT_DIR}/stage-status"
+  {
+    printf 'STAGE=%s\n' "$(stage_name "${n}")"
+    printf 'LABEL=%s\n' "${label}"
+    printf 'STATE=%s\n' "${state}"
+    printf 'UPSTREAM_REPO=%s\n' "${UPSTREAM_REPO}"
+    printf 'UPSTREAM_REF=%s\n' "${UPSTREAM_REF}"
+  } > "${OUT_DIR}/stage-status/$(stage_name "${n}").env"
+}
+
+run_stage() {
+  local n="$1"
+  local label="$2"
+  shift 2
+  if (( n < START_STAGE_NUM || n > STOP_STAGE_NUM )); then
+    log "stage:skip: $(stage_name "${n}") ${label}"
+    return 0
+  fi
+  export CURRENT_STAGE_ID="${n}"
+  export CURRENT_STAGE="$(stage_name "${n}")"
+  export CURRENT_STAGE_LABEL="${label}"
+  log "stage:start: ${CURRENT_STAGE} ${label}"
+  write_stage_status "${n}" "started"
+  "$@"
+  write_stage_status "${n}" "completed"
+  log "stage:done: ${CURRENT_STAGE} ${label}"
+}
+
 run_hooks() {
   local stage="$1"
   local hook_dir="${ROOT_DIR}/init/hooks/${stage}.d"
 
   [[ -d "${hook_dir}" ]] || return 0
 
-  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS CMAKE_PATCHER NATIVE_PATCHER RESOURCE_FIXER GRADLE_PATCHER GRADLE_AUTOFIX WARNING_AUTOPATCH WARNING_AUTOPATCH_RETRY WARNING_AUTOPATCH_STRICT RUN_BUILD RUN_MODS
+  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS START_STAGE STOP_AFTER_STAGE ARTIFACTS_APPROVED APPROVED_ARTIFACTS_MANIFEST HIJACKING_OVERLAY CMAKE_PATCHER NATIVE_PATCHER RESOURCE_FIXER GRADLE_PATCHER GRADLE_AUTOFIX WARNING_AUTOPATCH WARNING_AUTOPATCH_RETRY WARNING_AUTOPATCH_STRICT RUN_BUILD RUN_MODS CURRENT_STAGE CURRENT_STAGE_ID CURRENT_STAGE_LABEL
 
   shopt -s nullglob
   local hook
@@ -129,6 +226,24 @@ apply_mods() {
     --repo "${WORK_DIR}" \
     --manifest "${PATCH_MANIFEST}" \
     --root "${ROOT_DIR}"
+}
+
+run_stage_setup() {
+  run_hooks pre-setup
+  setup_project
+  run_hooks post-setup
+}
+
+run_stage_mods() {
+  run_hooks pre-mods
+  apply_mods
+  run_hooks post-mods
+}
+
+run_stage_collect() {
+  run_hooks pre-upload
+  collect_outputs
+  run_hooks post-upload
 }
 
 run_gradle_once() {
@@ -282,7 +397,7 @@ collect_outputs() {
   local report_backup="$(mktemp -d)"
   shopt -s nullglob
   local report
-  for report in "${OUT_DIR}"/*autopatch*.json "${OUT_DIR}"/*autofix*.json "${OUT_DIR}"/*gradle-patcher*.json; do
+  for report in "${OUT_DIR}"/*autopatch*.json "${OUT_DIR}"/*autofix*.json "${OUT_DIR}"/*gradle-patcher*.json "${OUT_DIR}"/*hijacking*.json; do
     [[ -f "${report}" ]] || continue
     cp "${report}" "${report_backup}/$(basename "${report}")"
   done
@@ -314,8 +429,13 @@ collect_outputs() {
   {
     printf 'UPSTREAM_REPO=%s\n' "${UPSTREAM_REPO}"
     printf 'UPSTREAM_REF=%s\n' "${UPSTREAM_REF}"
+    printf 'START_STAGE=%s\n' "$(stage_name "${START_STAGE_NUM}")"
+    printf 'STOP_AFTER_STAGE=%s\n' "$(stage_name "${STOP_STAGE_NUM}")"
+    printf 'ARTIFACTS_APPROVED=%s\n' "${ARTIFACTS_APPROVED}"
+    printf 'APPROVED_ARTIFACTS_MANIFEST=%s\n' "${APPROVED_ARTIFACTS_MANIFEST}"
     printf 'GRADLE_TASK=%s\n' "${GRADLE_TASK}"
     printf 'GRADLE_BOOTSTRAP_ARGS=%s\n' "${GRADLE_BOOTSTRAP_ARGS}"
+    printf 'HIJACKING_OVERLAY=%s\n' "${HIJACKING_OVERLAY}"
     printf 'CMAKE_PATCHER=%s\n' "${CMAKE_PATCHER}"
     printf 'NATIVE_PATCHER=%s\n' "${NATIVE_PATCHER}"
     printf 'RESOURCE_FIXER=%s\n' "${RESOURCE_FIXER}"
@@ -339,26 +459,19 @@ collect_outputs() {
 main() {
   need_cmd git
   need_cmd tar
+  validate_resume_gate
+  mkdir -p "${OUT_DIR}"
+  log "stage plan: start=$(stage_name "${START_STAGE_NUM}") stop=$(stage_name "${STOP_STAGE_NUM}") approved=${ARTIFACTS_APPROVED}"
 
-  run_hooks pre-clone
-  clone_upstream
-  run_hooks post-clone
-
-  run_hooks pre-setup
-  setup_project
-  run_hooks post-setup
-
-  run_hooks pre-mods
-  apply_mods
-  run_hooks post-mods
-
-  run_hooks pre-build
-  build_project
-  run_hooks post-build
-
-  run_hooks pre-upload
-  collect_outputs
-  run_hooks post-upload
+  run_stage 1 "pre-clone" run_hooks pre-clone
+  run_stage 2 "clone" clone_upstream
+  run_stage 3 "post-clone" run_hooks post-clone
+  run_stage 4 "setup" run_stage_setup
+  run_stage 5 "mods" run_stage_mods
+  run_stage 6 "pre-build" run_hooks pre-build
+  run_stage 7 "build" build_project
+  run_stage 8 "post-build" run_hooks post-build
+  run_stage 9 "collect" run_stage_collect
 
   log "done: ${OUT_DIR}"
 }
