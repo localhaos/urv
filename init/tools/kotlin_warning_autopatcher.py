@@ -59,6 +59,33 @@ subprojects {
     write_if_changed(build, original, text, changes, "kotlin-compiler-arg", "add -Xannotation-default-target=param-property", repo)
 
 
+def ensure_import(text: str, import_line: str) -> str:
+    if import_line in text:
+        return text
+    anchor = "import androidx.compose.material.icons.Icons\n"
+    if anchor in text:
+        return text.replace(anchor, anchor + import_line, 1)
+    package_match = re.search(r"^(package\s+[^\n]+\n)", text, flags=re.M)
+    if package_match:
+        end = package_match.end(1)
+        return text[:end] + "\n" + import_line + text[end:]
+    return import_line + text
+
+
+def patch_auto_mirrored_icon(text: str, name: str) -> str:
+    old_symbol = f"Icons.Outlined.{name}"
+    new_symbol = f"Icons.AutoMirrored.Outlined.{name}"
+    old_import = f"import androidx.compose.material.icons.outlined.{name}\n"
+    new_import = f"import androidx.compose.material.icons.automirrored.outlined.{name}\n"
+
+    if old_symbol in text:
+        text = text.replace(old_symbol, new_symbol)
+    if new_symbol in text:
+        text = text.replace(old_import, "")
+        text = ensure_import(text, new_import)
+    return text
+
+
 def patch_known_deprecations(repo: Path, changes: list[Change]) -> None:
     for source in sorted(repo.glob("**/*.kt")):
         if "/build/" in source.as_posix() or "/.gradle/" in source.as_posix():
@@ -68,9 +95,8 @@ def patch_known_deprecations(repo: Path, changes: list[Change]) -> None:
 
         text = text.replace("Looper.prepareMainLooper()", 'if (Looper.myLooper() == null) {\n                Looper::class.java.getDeclaredMethod("prepareMainLooper").invoke(null)\n            }')
         text = text.replace("consumePositionChange()", "consume()")
-        text = text.replace("Icons.Outlined.Sort", "Icons.AutoMirrored.Outlined.Sort")
-        text = text.replace("Icons.Outlined.List", "Icons.AutoMirrored.Outlined.List")
-        text = text.replace("Icons.Outlined.OpenInNew", "Icons.AutoMirrored.Outlined.OpenInNew")
+        for icon_name in ("Sort", "List", "OpenInNew"):
+            text = patch_auto_mirrored_icon(text, icon_name)
         text = re.sub(r"\bDivider\(", "HorizontalDivider(", text)
         text = re.sub(r"\bScrollableTabRow\(", "PrimaryScrollableTabRow(", text)
         text = re.sub(r"\bTabRow\(", "PrimaryTabRow(", text)
