@@ -30,6 +30,9 @@ GRADLE_AUTOFIX="${GRADLE_AUTOFIX:-${GRADLE_PATCHER}}"
 WARNING_AUTOPATCH="${WARNING_AUTOPATCH:-1}"
 WARNING_AUTOPATCH_RETRY="${WARNING_AUTOPATCH_RETRY:-1}"
 WARNING_AUTOPATCH_STRICT="${WARNING_AUTOPATCH_STRICT:-0}"
+SOURCE_TAR="${SOURCE_TAR:-0}"
+SOURCE_TAR_TIMEOUT_SECONDS="${SOURCE_TAR_TIMEOUT_SECONDS:-60}"
+SOURCE_TAR_MAX_MB="${SOURCE_TAR_MAX_MB:-80}"
 RUN_BUILD="${RUN_BUILD:-1}"
 RUN_MODS="${RUN_MODS:-1}"
 
@@ -149,7 +152,7 @@ run_hooks() {
 
   [[ -d "${hook_dir}" ]] || return 0
 
-  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS START_STAGE STOP_AFTER_STAGE ARTIFACTS_APPROVED APPROVED_ARTIFACTS_MANIFEST HIJACKING_OVERLAY CMAKE_PATCHER NATIVE_PATCHER JVM_PATCHER RESOURCE_FIXER GRADLE_PATCHER GRADLE_AUTOFIX WARNING_AUTOPATCH WARNING_AUTOPATCH_RETRY WARNING_AUTOPATCH_STRICT RUN_BUILD RUN_MODS CURRENT_STAGE CURRENT_STAGE_ID CURRENT_STAGE_LABEL
+  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS START_STAGE STOP_AFTER_STAGE ARTIFACTS_APPROVED APPROVED_ARTIFACTS_MANIFEST HIJACKING_OVERLAY CMAKE_PATCHER NATIVE_PATCHER JVM_PATCHER RESOURCE_FIXER GRADLE_PATCHER GRADLE_AUTOFIX WARNING_AUTOPATCH WARNING_AUTOPATCH_RETRY WARNING_AUTOPATCH_STRICT SOURCE_TAR SOURCE_TAR_TIMEOUT_SECONDS SOURCE_TAR_MAX_MB RUN_BUILD RUN_MODS CURRENT_STAGE CURRENT_STAGE_ID CURRENT_STAGE_LABEL
 
   shopt -s nullglob
   local hook
@@ -387,6 +390,65 @@ build_project() {
   return "${first_status}"
 }
 
+write_source_manifest() {
+  [[ -d "${WORK_DIR}" ]] || return 0
+  log "source manifest"
+  (
+    cd "${WORK_DIR}"
+    find . \
+      \( -path './.git' -o -path './.git/*' -o -path './.gradle' -o -path './.gradle/*' -o -path './build' -o -path './build/*' -o -path './.cxx' -o -path './.cxx/*' -o -path './.kotlin' -o -path './.kotlin/*' -o -path './.idea' -o -path './.idea/*' -o -path './captures' -o -path './captures/*' -o -path './*/build' -o -path './*/build/*' -o -path './*/.cxx' -o -path './*/.cxx/*' \) -prune \
+      -o -type f -printf '%P\t%s\n' | sort
+  ) > "${OUT_DIR}/modified-source-files.tsv" || true
+}
+
+maybe_create_source_tar() {
+  [[ "${SOURCE_TAR}" == "1" ]] || {
+    log "source tar disabled; set SOURCE_TAR=1 to create modified-source.tar.gz"
+    return 0
+  }
+  [[ -d "${WORK_DIR}" ]] || return 0
+
+  local tar_file="${OUT_DIR}/modified-source.tar.gz"
+  local tar_log="${OUT_DIR}/modified-source-tar.log"
+  local timeout_cmd=(timeout "${SOURCE_TAR_TIMEOUT_SECONDS}s")
+  if ! command -v timeout >/dev/null 2>&1; then
+    timeout_cmd=()
+  fi
+
+  log "source tar: creating ${tar_file} with timeout ${SOURCE_TAR_TIMEOUT_SECONDS}s"
+  set +e
+  "${timeout_cmd[@]}" tar -C "${WORK_DIR}" \
+    --exclude='.git' \
+    --exclude='.gradle' \
+    --exclude='build' \
+    --exclude='*/build' \
+    --exclude='.cxx' \
+    --exclude='*/.cxx' \
+    --exclude='.kotlin' \
+    --exclude='*/.kotlin' \
+    --exclude='.idea' \
+    --exclude='captures' \
+    -czf "${tar_file}" . >"${tar_log}" 2>&1
+  local status=$?
+  set -e
+  if [[ "${status}" != "0" ]]; then
+    log "source tar skipped/failed with status ${status}; see ${tar_log}"
+    rm -f "${tar_file}"
+    return 0
+  fi
+
+  local bytes max_bytes
+  bytes="$(wc -c < "${tar_file}" | tr -d ' ')"
+  max_bytes=$(( SOURCE_TAR_MAX_MB * 1024 * 1024 ))
+  if (( bytes > max_bytes )); then
+    log "source tar too large (${bytes} bytes > ${SOURCE_TAR_MAX_MB} MB); deleting ${tar_file}"
+    rm -f "${tar_file}"
+    printf 'SOURCE_TAR_SKIPPED=too_large\nSOURCE_TAR_BYTES=%s\nSOURCE_TAR_MAX_MB=%s\n' "${bytes}" "${SOURCE_TAR_MAX_MB}" > "${OUT_DIR}/modified-source-tar.env"
+    return 0
+  fi
+  printf 'SOURCE_TAR_CREATED=1\nSOURCE_TAR_BYTES=%s\nSOURCE_TAR_MAX_MB=%s\n' "${bytes}" "${SOURCE_TAR_MAX_MB}" > "${OUT_DIR}/modified-source-tar.env"
+}
+
 collect_outputs() {
   log "collect outputs"
   local log_backup=""
@@ -404,7 +466,7 @@ collect_outputs() {
   local report_backup="$(mktemp -d)"
   shopt -s nullglob
   local report
-  for report in "${OUT_DIR}"/*autopatch*.json "${OUT_DIR}"/*autofix*.json "${OUT_DIR}"/*gradle-patcher*.json "${OUT_DIR}"/*hijacking*.json; do
+  for report in "${OUT_DIR}"/*autopatch*.json "${OUT_DIR}"/*autofix*.json "${OUT_DIR}"/*gradle-patcher*.json "${OUT_DIR}"/*hijacking*.json "${OUT_DIR}"/*tar*.env "${OUT_DIR}"/*tar*.log; do
     [[ -f "${report}" ]] || continue
     cp "${report}" "${report_backup}/$(basename "${report}")"
   done
@@ -420,7 +482,8 @@ collect_outputs() {
     cp -a "${stage_backup}/stage-status" "${OUT_DIR}/stage-status"
   fi
   shopt -s nullglob
-  for report in "${report_backup}"/*.json; do
+  for report in "${report_backup}"/*; do
+    [[ -f "${report}" ]] || continue
     cp "${report}" "${OUT_DIR}/$(basename "${report}")"
   done
   shopt -u nullglob
@@ -436,6 +499,9 @@ collect_outputs() {
   fi
 
   git -C "${WORK_DIR}" rev-parse HEAD > "${OUT_DIR}/upstream-commit.txt" 2>/dev/null || true
+  write_source_manifest
+  maybe_create_source_tar
+
   {
     printf 'UPSTREAM_REPO=%s\n' "${UPSTREAM_REPO}"
     printf 'UPSTREAM_REF=%s\n' "${UPSTREAM_REF}"
@@ -455,21 +521,16 @@ collect_outputs() {
     printf 'WARNING_AUTOPATCH=%s\n' "${WARNING_AUTOPATCH}"
     printf 'WARNING_AUTOPATCH_RETRY=%s\n' "${WARNING_AUTOPATCH_RETRY}"
     printf 'WARNING_AUTOPATCH_STRICT=%s\n' "${WARNING_AUTOPATCH_STRICT}"
+    printf 'SOURCE_TAR=%s\n' "${SOURCE_TAR}"
+    printf 'SOURCE_TAR_TIMEOUT_SECONDS=%s\n' "${SOURCE_TAR_TIMEOUT_SECONDS}"
+    printf 'SOURCE_TAR_MAX_MB=%s\n' "${SOURCE_TAR_MAX_MB}"
     printf 'RUN_BUILD=%s\n' "${RUN_BUILD}"
     printf 'RUN_MODS=%s\n' "${RUN_MODS}"
   } > "${OUT_DIR}/build-meta.env"
-
-  tar -C "${WORK_DIR}" \
-    --exclude='.git' \
-    --exclude='.gradle' \
-    --exclude='build' \
-    --exclude='*/build' \
-    -czf "${OUT_DIR}/modified-source.tar.gz" .
 }
 
 main() {
   need_cmd git
-  need_cmd tar
   validate_resume_gate
   mkdir -p "${OUT_DIR}"
   log "stage plan: start=$(stage_name "${START_STAGE_NUM}") stop=$(stage_name "${STOP_STAGE_NUM}") approved=${ARTIFACTS_APPROVED}"
