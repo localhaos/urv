@@ -64,6 +64,9 @@ jobs:
       GRADLE_TASK: ${{ inputs.gradle_task || 'assembleDev' }}
       VINEFLOWER_VERSION: ${{ inputs.vineflower_version || '1.12.0' }}
       RUN_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.run_build == false && '0' || '1' }}
+      SOURCE_TAR: '0'
+      SOURCE_TAR_TIMEOUT_SECONDS: '60'
+      SOURCE_TAR_MAX_MB: '80'
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       EW_API_TOKEN: ${{ secrets.EW_API_TOKEN }}
 
@@ -155,10 +158,21 @@ jobs:
         uses: actions/upload-artifact@main
         with:
           name: urv-${{ github.run_number }}-${{ github.run_attempt }}
-          path: out/
-          if-no-files-found: error
+          path: |
+            out/app-build-outputs/**/*.apk
+            out/root-build-outputs/**/*.apk
+            out/saved-artifacts/**
+            out/emulator-wtf/**
+            out/logs/**
+            out/stage-status/**
+            out/*.json
+            out/*.env
+            out/*.txt
+            out/*.tsv
+            out/*.log
+          if-no-files-found: warn
           retention-days: 14
-          compression-level: 6
+          compression-level: 0
 
       - name: Optional upload modified tree to generated branch
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_generated_tree == true }}
