@@ -176,16 +176,20 @@ build_project() {
   local second_log="${log_dir}/gradle-build-2.log"
   local report_file="${OUT_DIR}/warning-autopatch-from-log.json"
 
+  set +e
   run_gradle_once "first" "${first_log}" ./gradlew clean "${GRADLE_TASK}" "${extra_args[@]}" --stacktrace
   local first_status=$?
+  set -e
 
   local patched=1
   run_warning_autopatcher_from_log "${first_log}" "${report_file}" && patched=0 || patched=1
 
   if [[ "${patched}" == "0" && "${WARNING_AUTOPATCH_RETRY}" == "1" ]]; then
     log "warning autopatcher changed source; retrying Gradle once"
+    set +e
     run_gradle_once "retry" "${second_log}" ./gradlew "${GRADLE_TASK}" "${extra_args[@]}" --stacktrace
     local retry_status=$?
+    set -e
     if [[ "${WARNING_AUTOPATCH_STRICT}" == "1" ]] && grep -q '^w: file://' "${second_log}"; then
       die "warnings remain after warning autopatch retry; see ${second_log}"
     fi
