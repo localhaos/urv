@@ -23,6 +23,7 @@ ARTIFACTS_APPROVED="${ARTIFACTS_APPROVED:-${APPROVED_ARTIFACTS:-0}}"
 HIJACKING_OVERLAY="${HIJACKING_OVERLAY:-1}"
 CMAKE_PATCHER="${CMAKE_PATCHER:-1}"
 NATIVE_PATCHER="${NATIVE_PATCHER:-1}"
+JVM_PATCHER="${JVM_PATCHER:-1}"
 RESOURCE_FIXER="${RESOURCE_FIXER:-1}"
 GRADLE_PATCHER="${GRADLE_PATCHER:-${GRADLE_AUTOFIX:-1}}"
 GRADLE_AUTOFIX="${GRADLE_AUTOFIX:-${GRADLE_PATCHER}}"
@@ -148,7 +149,7 @@ run_hooks() {
 
   [[ -d "${hook_dir}" ]] || return 0
 
-  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS START_STAGE STOP_AFTER_STAGE ARTIFACTS_APPROVED APPROVED_ARTIFACTS_MANIFEST HIJACKING_OVERLAY CMAKE_PATCHER NATIVE_PATCHER RESOURCE_FIXER GRADLE_PATCHER GRADLE_AUTOFIX WARNING_AUTOPATCH WARNING_AUTOPATCH_RETRY WARNING_AUTOPATCH_STRICT RUN_BUILD RUN_MODS CURRENT_STAGE CURRENT_STAGE_ID CURRENT_STAGE_LABEL
+  export ROOT_DIR WORK_DIR OUT_DIR UPSTREAM_REPO UPSTREAM_REF PATCH_MANIFEST GRADLE_TASK GRADLE_BOOTSTRAP_ARGS START_STAGE STOP_AFTER_STAGE ARTIFACTS_APPROVED APPROVED_ARTIFACTS_MANIFEST HIJACKING_OVERLAY CMAKE_PATCHER NATIVE_PATCHER JVM_PATCHER RESOURCE_FIXER GRADLE_PATCHER GRADLE_AUTOFIX WARNING_AUTOPATCH WARNING_AUTOPATCH_RETRY WARNING_AUTOPATCH_STRICT RUN_BUILD RUN_MODS CURRENT_STAGE CURRENT_STAGE_ID CURRENT_STAGE_LABEL
 
   shopt -s nullglob
   local hook
@@ -394,6 +395,12 @@ collect_outputs() {
     cp -a "${OUT_DIR}/logs" "${log_backup}/logs"
   fi
 
+  local stage_backup=""
+  if [[ -d "${OUT_DIR}/stage-status" ]]; then
+    stage_backup="$(mktemp -d)"
+    cp -a "${OUT_DIR}/stage-status" "${stage_backup}/stage-status"
+  fi
+
   local report_backup="$(mktemp -d)"
   shopt -s nullglob
   local report
@@ -408,6 +415,9 @@ collect_outputs() {
 
   if [[ -n "${log_backup}" && -d "${log_backup}/logs" ]]; then
     cp -a "${log_backup}/logs" "${OUT_DIR}/logs"
+  fi
+  if [[ -n "${stage_backup}" && -d "${stage_backup}/stage-status" ]]; then
+    cp -a "${stage_backup}/stage-status" "${OUT_DIR}/stage-status"
   fi
   shopt -s nullglob
   for report in "${report_backup}"/*.json; do
@@ -438,6 +448,7 @@ collect_outputs() {
     printf 'HIJACKING_OVERLAY=%s\n' "${HIJACKING_OVERLAY}"
     printf 'CMAKE_PATCHER=%s\n' "${CMAKE_PATCHER}"
     printf 'NATIVE_PATCHER=%s\n' "${NATIVE_PATCHER}"
+    printf 'JVM_PATCHER=%s\n' "${JVM_PATCHER}"
     printf 'RESOURCE_FIXER=%s\n' "${RESOURCE_FIXER}"
     printf 'GRADLE_PATCHER=%s\n' "${GRADLE_PATCHER}"
     printf 'GRADLE_AUTOFIX=%s\n' "${GRADLE_AUTOFIX}"
