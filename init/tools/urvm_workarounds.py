@@ -33,36 +33,11 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
-def replace_regex(text: str, pattern: str, repl: str, label: str, flags: int = 0) -> str:
-    new, count = re.subn(pattern, repl, text, count=1, flags=flags)
-    if count != 1:
-        raise WorkaroundError(f"regex anchor not found for {label}")
-    return new
-
-
 def patch_pm(repo: Path) -> None:
     pm = find_one(repo, ["app/src/main/java/**/util/PM.kt", "app/src/main/kotlin/**/util/PM.kt"])
     assert pm is not None
     text = pm.read_text(encoding="utf-8")
     original = text
-
-    if "PreferencesManager" not in text:
-        marker = "import app.revanced.manager.domain.repository.PatchBundleRepository\n"
-        text = replace_once(
-            text,
-            marker,
-            marker + "import app.revanced.manager.domain.manager.PreferencesManager\n",
-            "PM PreferencesManager import",
-        )
-
-    if "prefs: PreferencesManager" not in text:
-        text = replace_regex(
-            text,
-            r"(class\s+PM\s*\(\s*private\s+val\s+app:\s+Application,\s*patchBundleRepository:\s+PatchBundleRepository,\s*)(private\s+val\s+uninstaller:\s+PackageUninstaller)",
-            r"\1prefs: PreferencesManager,\n    \2",
-            "PM constructor prefs injection",
-            flags=re.S,
-        )
 
     if "LOCALHAOS_APP_LIST_FALLBACK" not in text:
         old_block = '''    val appList = patchBundleRepository.enabledBundlesInfoFlow.map { bundles ->
@@ -116,9 +91,9 @@ def patch_pm(repo: Path) -> None:
     }.flowOn(Dispatchers.IO)
 '''
         new_block = '''    // LOCALHAOS_APP_LIST_FALLBACK
-    // Keep the patchable-app selector usable while bundle metadata is empty,
-    // disabled, loading or transiently broken. Compatible apps are preferred;
-    // installed packages are used as a universal fallback when enabled.
+    // Always keep installed apps visible in the patch selector. Compatible apps
+    // remain sorted first, but an empty or broken bundle metadata state no longer
+    // collapses the selector to an empty list.
     val appList = patchBundleRepository.bundleInfoFlow.map { bundles ->
         val compatibleApps = scope.async {
             val compatiblePackages = bundles
@@ -135,8 +110,7 @@ def patch_pm(repo: Path) -> None:
         }
 
         val installedApps = scope.async {
-            if (!prefs.disableUniversalPatchCheck.get()) emptyList()
-            else getInstalledPackages().map { packageInfo ->
+            getInstalledPackages().map { packageInfo ->
                 AppInfo(packageInfo.packageName, 0, packageInfo)
             }
         }
