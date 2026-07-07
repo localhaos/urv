@@ -8,13 +8,17 @@ on:
         required: false
         default: 'https://github.com/Jman-Github/universal-revanced-manager.git'
       branch_id:
-        description: 'Branch, tag or commit. Empty = main.'
+        description: 'Branch, tag or commit. Empty = dev.'
         required: false
-        default: 'main'
+        default: 'dev'
       gradle_task:
         description: 'Gradle task to run when build is enabled.'
         required: false
         default: 'assembleRelease'
+      vineflower_version:
+        description: 'Vineflower Maven version injected into Gradle catalog.'
+        required: false
+        default: '1.12.0'
       run_build:
         description: 'Run Gradle build.'
         type: boolean
@@ -55,8 +59,9 @@ jobs:
 
     env:
       UPSTREAM_REPO: ${{ inputs.upstream_repo || 'https://github.com/Jman-Github/universal-revanced-manager.git' }}
-      UPSTREAM_REF: ${{ inputs.branch_id || 'main' }}
+      UPSTREAM_REF: ${{ inputs.branch_id || 'dev' }}
       GRADLE_TASK: ${{ inputs.gradle_task || 'assembleRelease' }}
+      VINEFLOWER_VERSION: ${{ inputs.vineflower_version || '1.12.0' }}
       RUN_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.run_build == false && '0' || '1' }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
