@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "mode": "overlay",
+  "description": "Controlled build-time file overlay applied into WORK_DIR. No runtime/session/browser hijacking."
+}
