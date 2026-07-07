@@ -22,14 +22,15 @@ UPSTREAM_REF=dev
 ## Layout
 
 ```text
-start                         root bootstrap runner
-.github/workflows/start.yml   GitHub Actions pipeline
-init/config/*.env             reusable presets
-init/mods.yml                 overlay / patch manifest
-init/overlays/                complete files copied into upstream checkout
-init/hooks/<stage>.d/*.sh     update-resistant hook points
-init/tools/apply_mods.py      deterministic patch engine
+start                          root bootstrap runner
+.github/workflows/start.yml    GitHub Actions pipeline
+init/config/*.env              reusable presets
+init/mods.yml                  overlay / patch manifest
+init/overlays/                 complete files copied into upstream checkout
+init/hooks/<stage>.d/*.sh      update-resistant hook points
+init/tools/apply_mods.py       deterministic patch engine
 init/tools/urvm_workarounds.py URVM-specific source workarounds
+init/tools/add_vineflower_gradle.py Vineflower Gradle dependency injector
 ```
 
 ## URVM workarounds
@@ -49,6 +50,30 @@ Current workarounds:
 4. Make optional runtime modules conditional in settings.gradle.kts when the
    upstream branch does not ship the same module set.
 ```
+
+## Vineflower
+
+`init/hooks/post-mods.d/30-add-vineflower-gradle.sh` injects Vineflower through
+Gradle instead of vendoring a JAR. It patches:
+
+```text
+gradle/libs.versions.toml
+app/build.gradle.kts
+```
+
+Default Maven coordinate:
+
+```text
+org.vineflower:vineflower:1.12.0
+```
+
+Override the version with:
+
+```bash
+VINEFLOWER_VERSION=1.12.0 ./start
+```
+
+or with the `vineflower_version` input in the GitHub Actions workflow.
 
 ## Patch model
 
@@ -91,6 +116,7 @@ Important inputs:
 upstream_repo          upstream Git URL; empty means default
 branch_id              branch, tag or commit; empty means dev
 gradle_task            default: assembleRelease
+vineflower_version     default: 1.12.0
 run_build              whether to run Gradle build
 run_emulator_wtf       optional emulator.wtf test step
 upload_generated_tree  force-push modified upstream tree to generated/<run_number>
