@@ -14,7 +14,7 @@ on:
       gradle_task:
         description: 'Gradle task to run when build is enabled.'
         required: false
-        default: 'assembleDebug'
+        default: 'assembleDev'
       vineflower_version:
         description: 'Vineflower Maven version injected into Gradle catalog.'
         required: false
@@ -60,7 +60,7 @@ jobs:
     env:
       UPSTREAM_REPO: ${{ inputs.upstream_repo || 'https://github.com/Jman-Github/universal-revanced-manager.git' }}
       UPSTREAM_REF: ${{ inputs.branch_id || 'dev' }}
-      GRADLE_TASK: ${{ inputs.gradle_task || 'assembleDebug' }}
+      GRADLE_TASK: ${{ inputs.gradle_task || 'assembleDev' }}
       VINEFLOWER_VERSION: ${{ inputs.vineflower_version || '1.12.0' }}
       RUN_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.run_build == false && '0' || '1' }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
