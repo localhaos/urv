@@ -1,0 +1,6 @@
+# Copy this block into init/mods.yml under `overlays`.
+- id: replace-complete-file
+  enabled: true
+  source: init/overlays/path/in/bootstrap/repo/File.kt
+  target: path/in/upstream/repo/File.kt
+  mode: replace
