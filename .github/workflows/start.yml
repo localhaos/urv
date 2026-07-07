@@ -41,6 +41,7 @@ on:
       - 'start'
       - 'start.ps1'
       - 'init/**'
+      - 'build_ok'
       - '.github/workflows/start.yml'
 
 permissions:
@@ -117,8 +118,20 @@ jobs:
           chmod +x ./start
           ./start "$UPSTREAM_REPO" "$UPSTREAM_REF"
 
+      - name: Save build_ok artifacts
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 init/tools/save_artifact_from_build_ok.py \
+            --repo . \
+            --build-ok build_ok \
+            --out-dir out/saved-artifacts \
+            --manifest out/saved-artifacts/manifest.json
+
       - name: Locate APK
         id: apk
+        if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -138,6 +151,7 @@ jobs:
           outputs-dir: out/emulator-wtf
 
       - name: Upload build outputs
+        if: ${{ always() }}
         uses: actions/upload-artifact@main
         with:
           name: urv-${{ github.run_number }}-${{ github.run_attempt }}
