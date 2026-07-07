@@ -3,6 +3,8 @@
 
 Scope:
 - normalize native build environment declarations in local.properties;
+- remove deprecated ndk.dir from local.properties;
+- pin android.ndkVersion in Android modules;
 - add conservative Gradle properties for Android native/CMake diagnostics;
 - report NDK/CMake/linker diagnostics from Gradle logs;
 - avoid Kotlin/Java source rewrites.
@@ -19,6 +21,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 NATIVE_LOG_PATTERNS = (
+    "[CXX5106]",
+    "NDK was located by using ndk.dir property",
+    "ndk.dir",
+    "android.ndkVersion",
     "CMake Error",
     "CMake Warning",
     "ninja:",
@@ -99,6 +105,11 @@ def set_property(text: str, key: str, value: str) -> str:
     return text + ("" if not text or text.endswith("\n") else "\n") + line + "\n"
 
 
+def remove_property(text: str, key: str) -> str:
+    text = re.sub(rf"^\s*{re.escape(key)}\s*=.*(?:\n|$)", "", text, flags=re.M)
+    return text
+
+
 def find_android_sdk() -> Path | None:
     for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
         value = os.environ.get(key)
@@ -114,17 +125,17 @@ def patch_local_properties(repo: Path, changes: list[Change], dry_run: bool) -> 
     before = read(local_props) if local_props.exists() else ""
     text = before
 
+    # CXX5106: ndk.dir is deprecated. Keep NDK selection in Gradle via android.ndkVersion.
+    text = remove_property(text, "ndk.dir")
+
     sdk = find_android_sdk()
     if sdk:
         text = set_property(text, "sdk.dir", str(sdk))
-        ndk_dir = sdk / "ndk" / DEFAULT_NDK_VERSION
-        if ndk_dir.exists():
-            text = set_property(text, "ndk.dir", str(ndk_dir))
         cmake_dir = sdk / "cmake" / DEFAULT_CMAKE_VERSION
         if cmake_dir.exists():
             text = set_property(text, "cmake.dir", str(cmake_dir))
 
-    write_if_changed(local_props, before, text, changes, "native-local-properties", "normalize sdk/ndk/cmake paths when available", repo, dry_run)
+    write_if_changed(local_props, before, text, changes, "native-local-properties", "remove deprecated ndk.dir and normalize sdk/cmake paths", repo, dry_run)
 
 
 def patch_gradle_properties(repo: Path, changes: list[Change], dry_run: bool) -> None:
@@ -136,18 +147,60 @@ def patch_gradle_properties(repo: Path, changes: list[Change], dry_run: bool) ->
     write_if_changed(props, before, text, changes, "native-gradle-properties", "add conservative native build Gradle properties", repo, dry_run)
 
 
-def patch_app_build(repo: Path, changes: list[Change], dry_run: bool) -> None:
-    app_build = repo / "app/build.gradle.kts"
-    if not app_build.exists():
-        return
-    before = read(app_build)
-    text = before
+def is_android_build_script(text: str) -> bool:
+    return (
+        "com.android.application" in text
+        or "com.android.library" in text
+        or "com.android.dynamic-feature" in text
+        or re.search(r"^\s*android\s*\{", text, flags=re.M) is not None
+    )
 
-    # Only add ndkVersion when the Android app script has no explicit version.
-    if "ndkVersion" not in text and "android {" in text:
-        text = text.replace("android {\n", f"android {{\n    ndkVersion = \"{DEFAULT_NDK_VERSION}\"\n", 1)
 
-    write_if_changed(app_build, before, text, changes, "native-gradle-android", f"pin ndkVersion {DEFAULT_NDK_VERSION} when missing", repo, dry_run)
+def has_native_signal(text: str) -> bool:
+    return (
+        "externalNativeBuild" in text
+        or "CMakeLists.txt" in text
+        or "cmake" in text
+        or "ndkVersion" in text
+        or "ndk {" in text
+        or "abiFilters" in text
+    )
+
+
+def patch_kotlin_dsl_ndk_version(text: str) -> str:
+    if "ndkVersion" in text:
+        return text
+    return text.replace("android {\n", f"android {{\n    ndkVersion = \"{DEFAULT_NDK_VERSION}\"\n", 1)
+
+
+def patch_groovy_dsl_ndk_version(text: str) -> str:
+    if "ndkVersion" in text:
+        return text
+    return text.replace("android {\n", f"android {{\n    ndkVersion \"{DEFAULT_NDK_VERSION}\"\n", 1)
+
+
+def patch_android_module_ndk_versions(repo: Path, changes: list[Change], dry_run: bool) -> None:
+    candidates = list(repo.glob("**/build.gradle.kts")) + list(repo.glob("**/build.gradle"))
+    for build in sorted(candidates):
+        posix = build.as_posix()
+        if "/build/" in posix or "/.gradle/" in posix or "/.cxx/" in posix:
+            continue
+        before = read(build)
+        if not is_android_build_script(before):
+            continue
+
+        text = before
+        if build.name.endswith(".kts"):
+            text = patch_kotlin_dsl_ndk_version(text)
+        else:
+            text = patch_groovy_dsl_ndk_version(text)
+
+        detail = f"pin android.ndkVersion {DEFAULT_NDK_VERSION}"
+        if has_native_signal(before):
+            detail += " for native Android module"
+        else:
+            detail += " for Android module to avoid ndk.dir fallback"
+        write_if_changed(build, before, text, changes, "native-gradle-android", detail, repo, dry_run)
 
 
 def parse_log(log_path: Path | None, findings: list[Finding]) -> None:
@@ -157,11 +210,14 @@ def parse_log(log_path: Path | None, findings: list[Finding]) -> None:
         if not any(token in line for token in NATIVE_LOG_PATTERNS):
             continue
         file_match = re.search(r"file://([^:]+):(\d+):(\d+)", line)
+        reason = "native/NDK/CMake diagnostic captured; source and CMakeLists rewrites require explicit project-specific rule"
+        if "[CXX5106]" in line or "ndk.dir" in line:
+            reason = f"CXX5106 handled by removing ndk.dir and pinning android.ndkVersion {DEFAULT_NDK_VERSION}"
         findings.append(Finding(
             path=file_match.group(1) if file_match else None,
             line=i,
             message=line.strip()[:700],
-            reason="native/NDK/CMake diagnostic captured; source and CMakeLists rewrites require explicit project-specific rule",
+            reason=reason,
         ))
 
 
@@ -177,6 +233,7 @@ def write_report(path: Path | None, changes: list[Change], findings: list[Findin
         "defaults": {
             "ndkVersion": DEFAULT_NDK_VERSION,
             "cmakeVersion": DEFAULT_CMAKE_VERSION,
+            "deprecatedLocalProperties": ["ndk.dir"],
         },
     }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -197,11 +254,11 @@ def main(argv: list[str]) -> int:
     findings: list[Finding] = []
     patch_local_properties(repo, changes, args.dry_run)
     patch_gradle_properties(repo, changes, args.dry_run)
-    patch_app_build(repo, changes, args.dry_run)
+    patch_android_module_ndk_versions(repo, changes, args.dry_run)
     parse_log(args.log, findings)
     write_report(args.report, changes, findings)
 
-    for change in changes[:40]:
+    for change in changes[:80]:
         log(f"{change.rule}: {change.path} :: {change.detail}")
     if findings:
         log(f"native findings: {len(findings)}")
