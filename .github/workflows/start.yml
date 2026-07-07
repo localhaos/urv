@@ -1,0 +1,149 @@
+name: URV Bootstrap / Sync / Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: 'Upstream Git URL. Empty = default Universal ReVanced Manager.'
+        required: false
+        default: 'https://github.com/Jman-Github/universal-revanced-manager.git'
+      branch_id:
+        description: 'Branch, tag or commit. Empty = main.'
+        required: false
+        default: 'main'
+      gradle_task:
+        description: 'Gradle task to run when build is enabled.'
+        required: false
+        default: 'assembleRelease'
+      run_build:
+        description: 'Run Gradle build.'
+        type: boolean
+        required: true
+        default: true
+      run_emulator_wtf:
+        description: 'Run emulator.wtf tests when EW_API_TOKEN and APK/test APK exist.'
+        type: boolean
+        required: true
+        default: false
+      upload_generated_tree:
+        description: 'Push modified upstream source tree to generated/<run_number>.'
+        type: boolean
+        required: true
+        default: false
+
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'start'
+      - 'start.ps1'
+      - 'init/**'
+      - '.github/workflows/start.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: urv-bootstrap-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    name: Clone, patch, build and upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: ${{ inputs.upstream_repo || 'https://github.com/Jman-Github/universal-revanced-manager.git' }}
+      UPSTREAM_REF: ${{ inputs.branch_id || 'main' }}
+      GRADLE_TASK: ${{ inputs.gradle_task || 'assembleRelease' }}
+      RUN_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.run_build == false && '0' || '1' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout bootstrap repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Cache Gradle and Android build state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.android/build-cache
+            .work/upstream/.gradle
+          key: urv-gradle-${{ runner.os }}-${{ hashFiles('init/**/*.yml', 'init/**/*.yaml', 'init/**/*.py', 'init/**/*.sh') }}
+          restore-keys: |
+            urv-gradle-${{ runner.os }}-
+
+      - name: Setup Android SDK tools
+        uses: maxim-lobanov/setup-android-tools@v1
+        with:
+          packages: |
+            platform-tools
+            build-tools;35.0.0
+            platforms;android-35
+            cmdline-tools;latest
+          cache: true
+
+      - name: Setup Python patch dependencies
+        shell: bash
+        run: python3 -m pip install --user 'PyYAML>=6.0,<7.0'
+
+      - name: Run bootstrap
+        shell: bash
+        run: |
+          chmod +x ./start
+          ./start "$UPSTREAM_REPO" "$UPSTREAM_REF"
+
+      - name: Locate release APK
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find out -type f -name '*.apk' ! -name '*androidTest*' | sort | head -n 1 || true)"
+          test_apk="$(find out -type f -name '*androidTest*.apk' | sort | head -n 1 || true)"
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
+          echo "test_apk=$test_apk" >> "$GITHUB_OUTPUT"
+          printf 'APK=%s\nTEST_APK=%s\n' "$apk" "$test_apk"
+
+      - name: Optional emulator.wtf tests
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_emulator_wtf == true && secrets.EW_API_TOKEN != '' && steps.apk.outputs.apk != '' && steps.apk.outputs.test_apk != '' }}
+        uses: emulator-wtf/actions/run-tests@v1.0.0
+        with:
+          api-token: ${{ secrets.EW_API_TOKEN }}
+          app: ${{ steps.apk.outputs.apk }}
+          test: ${{ steps.apk.outputs.test_apk }}
+          outputs-dir: out/emulator-wtf
+
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: urv-${{ github.run_number }}-${{ github.run_attempt }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Optional upload modified tree to generated branch
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_generated_tree == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .work/upstream
+          rm -rf .git
+          git init
+          git checkout -B "generated/${GITHUB_RUN_NUMBER}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "sync: generated URV tree ${GITHUB_RUN_NUMBER}"
+          git remote add target "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force target HEAD:"generated/${GITHUB_RUN_NUMBER}"
