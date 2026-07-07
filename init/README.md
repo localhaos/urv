@@ -101,6 +101,45 @@ RUN_MODS
 
 Hook scripts are executed with `bash`. Non-`.sh` files are executed only when they have the executable bit set in the runtime filesystem.
 
+## LocalHaos idea stage
+
+`init/hooks/pre-build.d/26-localhaos-ideas-one-apk.sh` runs `init/tools/localhaos_ideas_importer.py` before Gradle build.
+
+It uses:
+
+```env
+LOCALHAOS_IDEAS=1
+LOCALHAOS_IDEAS_CLONE=1
+LOCALHAOS_IDEA_REPO=https://github.com/localhaos/revanced-manager.git
+LOCALHAOS_IDEA_REF=main
+ONE_APK_BUNDLE=1
+```
+
+The reference repository is analyzed as an idea source only. Source files are not blindly copied.
+
+The applied `LOCALHAOS_ONE_APK_BUNDLE` Gradle patch embeds these assets into the manager APK when available:
+
+```text
+assets/localhaos/one-apk.json
+assets/localhaos/downloaders/downloaders-api.aar
+assets/localhaos/plugins/revanced-v21-runtime-plugin.apk
+```
+
+The runtime plugin asset is included only when the upstream checkout contains `:revanced.v21-runtime-plugin`.
+
+Report:
+
+```text
+out/gradle-patcher-localhaos-ideas.json
+```
+
+Disable analysis or bundling with:
+
+```env
+LOCALHAOS_IDEAS=0
+ONE_APK_BUNDLE=0
+```
+
 ## Cached templates overlay
 
 `init/templates/overlay` is applied by `init/hooks/post-mods.d/38-template-overlay.sh`.
