@@ -71,10 +71,10 @@ def patch_known_deprecations(repo: Path, changes: list[Change]) -> None:
         text = text.replace("Icons.Outlined.Sort", "Icons.AutoMirrored.Outlined.Sort")
         text = text.replace("Icons.Outlined.List", "Icons.AutoMirrored.Outlined.List")
         text = text.replace("Icons.Outlined.OpenInNew", "Icons.AutoMirrored.Outlined.OpenInNew")
-        text = text.replace("Divider(", "HorizontalDivider(")
-        text = text.replace("ScrollableTabRow(", "PrimaryScrollableTabRow(")
-        text = text.replace("TabRow(", "PrimaryTabRow(")
-        text = text.replace("ButtonDefaults.outlinedButtonBorder", "ButtonDefaults.outlinedButtonBorder(enabled = true)")
+        text = re.sub(r"\bDivider\(", "HorizontalDivider(", text)
+        text = re.sub(r"\bScrollableTabRow\(", "PrimaryScrollableTabRow(", text)
+        text = re.sub(r"\bTabRow\(", "PrimaryTabRow(", text)
+        text = re.sub(r"ButtonDefaults\.outlinedButtonBorder(?!\s*\()", "ButtonDefaults.outlinedButtonBorder(enabled = true)", text)
         text = text.replace("circularTrackColor", "circularIndeterminateTrackColor")
         text = text.replace("import androidx.compose.material3.Divider\n", "import androidx.compose.material3.HorizontalDivider\n")
         text = text.replace("import androidx.compose.material3.ScrollableTabRow\n", "import androidx.compose.material3.PrimaryScrollableTabRow\n")
@@ -123,7 +123,6 @@ def remove_simple_elvis(line: str, col: int) -> tuple[str, bool]:
         pos = line.find("?:")
     if pos < 0:
         return line, False
-    # Only patch one-line simple Elvis tails. Complex multiline expressions are intentionally skipped.
     tail = line[pos:]
     if any(token in tail for token in ["{", "}", "->"]):
         return line, False
@@ -168,8 +167,7 @@ def apply_log_warning(repo: Path, path: Path, line_no: int, col: int, msg: str, 
         return
     lines[idx] = patched
     after = "".join(lines)
-    if write_if_changed(path, text, after, changes, rule, msg, repo):
-        return
+    write_if_changed(path, text, after, changes, rule, msg, repo)
 
 
 def apply_log_driven_rules(repo: Path, log_path: Path | None, changes: list[Change]) -> None:
