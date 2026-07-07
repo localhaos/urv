@@ -30,6 +30,28 @@ def append_gradle_property(path: Path, key: str, value: str) -> None:
 # Fix hard CI failure: upstream checks project.hasProperty("signAsDebug").
 append_gradle_property(repo / 'gradle.properties', 'signAsDebug', 'true')
 
+# Suppress Kotlin source-level deprecation noise that cannot be rewritten reliably by this connector.
+root_build = repo / 'build.gradle.kts'
+if root_build.exists():
+    text = root_build.read_text(encoding='utf-8')
+    original = text
+    marker = '// LOCALHAOS_SUPPRESS_KOTLIN_DEPRECATION_NOISE'
+    block = '''
+// LOCALHAOS_SUPPRESS_KOTLIN_DEPRECATION_NOISE
+subprojects {
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        compilerOptions {
+            suppressWarnings.set(true)
+        }
+    }
+}
+'''
+    if marker not in text:
+        text = text.rstrip() + '\n' + block
+    if text != original:
+        root_build.write_text(text, encoding='utf-8')
+        log('patched root KotlinCompile warning suppression')
+
 # Fix Kotlin/AGP publication warning for :api release component.
 api = repo / 'api' / 'build.gradle.kts'
 if api.exists():
