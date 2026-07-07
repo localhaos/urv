@@ -1,0 +1,12 @@
+# Copy this block into init/mods.yml under `patches`.
+# Works best with Kotlin/Java/JS/TS brace-delimited functions.
+- id: patch-function
+  enabled: true
+  target: app/src/main/java/example/Example.kt
+  strategy: function
+  name: "functionName"
+  expected_contains: "fun functionName("
+  replace: |
+    fun functionName(): String {
+        return "patched"
+    }
