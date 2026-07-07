@@ -39,21 +39,25 @@ class Change:
     new: str
 
 
-def patch_file(path: Path, dry_run: bool) -> list[Change]:
-    text = path.read_text(encoding="utf-8")
+def patch_text(path: Path, text: str) -> tuple[str, list[Change]]:
     updated = text
     changes: list[Change] = []
     for old, new in REPLACEMENTS.items():
         if old in updated:
             updated = updated.replace(old, new)
             changes.append(Change(str(path), old, new))
+    return updated, changes
+
+
+def patch_file(path: Path, dry_run: bool) -> tuple[str, list[Change]]:
+    text = path.read_text(encoding="utf-8")
+    updated, changes = patch_text(path, text)
     if updated != text and not dry_run:
         path.write_text(updated, encoding="utf-8")
-    return changes
+    return updated, changes
 
 
-def validate_file(path: Path) -> list[str]:
-    text = path.read_text(encoding="utf-8")
+def validate_text(path: Path, text: str) -> list[str]:
     problems = []
     for forbidden in FORBIDDEN:
         if forbidden in text:
@@ -81,8 +85,9 @@ def main(argv: list[str]) -> int:
     changes: list[Change] = []
     problems: list[str] = []
     for path in workflow_files(repo):
-        changes.extend(patch_file(path, dry_run=args.check))
-        problems.extend(validate_file(path))
+        patched_text, file_changes = patch_file(path, dry_run=args.check)
+        changes.extend(file_changes)
+        problems.extend(validate_text(path, patched_text))
 
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
