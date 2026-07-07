@@ -9,6 +9,7 @@ init/
   STAGES/       # declarative stage map: STAGE_1 ... STAGE_9
   tools/        # reusable utilities and patchers
   hooks/        # executable stage hooks
+  templates/    # cached template overlay workspace
   hijacking/    # controlled build-time overlay; no runtime/session hijacking
   config/       # default.env and runtime defaults
   overlays/     # complete replacement overlays used by mods/tools
@@ -67,10 +68,11 @@ This prevents accidentally resuming from unreviewed intermediate artifacts.
 
 ## Recommended modification order
 
-1. Put complete replacement files under `init/overlays` or `init/hijacking/overlay` when intentional replacement is required.
-2. Describe deterministic file/regex/function changes in `init/mods.yml`.
-3. Put procedural or parser-aware changes in `init/hooks/<stage>.d/*.sh`.
-4. Put reusable utilities in `init/tools/`.
+1. Put fast reusable template replacements under `init/templates/overlay`.
+2. Put complete replacement files under `init/overlays` or `init/hijacking/overlay` when intentional replacement is required.
+3. Describe deterministic file/regex/function changes in `init/mods.yml`.
+4. Put procedural or parser-aware changes in `init/hooks/<stage>.d/*.sh`.
+5. Put reusable utilities in `init/tools/`.
 
 Avoid patching by line numbers unless the line patch has a strict marker or `expected_contains` guard. Upstream can move code without changing the semantic function or marker.
 
@@ -98,6 +100,35 @@ RUN_MODS
 ```
 
 Hook scripts are executed with `bash`. Non-`.sh` files are executed only when they have the executable bit set in the runtime filesystem.
+
+## Cached templates overlay
+
+`init/templates/overlay` is applied by `init/hooks/post-mods.d/38-template-overlay.sh`.
+
+A file placed at:
+
+```text
+init/templates/overlay/app/src/main/res/values/template_strings.xml
+```
+
+is copied to:
+
+```text
+WORK_DIR/app/src/main/res/values/template_strings.xml
+```
+
+The underlying `init/tools/hijacking_overlay.py` cache stores source hashes and skips unchanged templates. Reports are preserved as:
+
+```text
+out/gradle-patcher-template-overlay.json
+out/gradle-patcher-template-overlay.cache.json
+```
+
+Disable with:
+
+```env
+TEMPLATE_OVERLAY=0
+```
 
 ## Hijacking overlay
 
