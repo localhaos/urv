@@ -130,6 +130,38 @@ if loader.exists():
 else:
     log('MorphePatchBundleLoader.kt missing; skipping Morphe loader deprecation patch')
 
+process = repo / 'morphe-runtime/src/main/java/app/urv/manager/patcher/runtime/process/MorphePatcherProcess.kt'
+if process.exists():
+    text = process.read_text(encoding='utf-8')
+    original = text
+    old = '            Looper.prepareMainLooper()\n'
+    new = '''            if (Looper.myLooper() == null) {
+                Looper::class.java.getDeclaredMethod("prepareMainLooper").invoke(null)
+            }
+'''
+    text = text.replace(old, new, 1)
+    if text != original:
+        process.write_text(text, encoding='utf-8')
+        log(f'patched deprecated Looper bootstrap API: {process.relative_to(repo)}')
+    if 'Looper.prepareMainLooper()' in text:
+        fail(f'deprecated Looper API still present: {process.relative_to(repo)}')
+else:
+    log('MorphePatcherProcess.kt missing; skipping Looper deprecation patch')
+
+merger = repo / 'morphe-runtime/src/main/java/app/urv/manager/patcher/split/Merger.kt'
+if merger.exists():
+    text = merger.read_text(encoding='utf-8')
+    original = text
+    text = text.replace('import com.reandroid.arsc.header.TableHeader\n', '')
+    text = text.replace('            val header = module.tableBlock.headerBlock as? TableHeader ?: return@forEach\n', '            val header = module.tableBlock.headerBlock\n')
+    if text != original:
+        merger.write_text(text, encoding='utf-8')
+        log(f'patched unnecessary TableHeader cast: {merger.relative_to(repo)}')
+    if 'as? TableHeader' in text:
+        fail(f'unnecessary TableHeader cast still present: {merger.relative_to(repo)}')
+else:
+    log('Merger.kt missing; skipping unnecessary cast patch')
+
 # Reduce known Gradle/AGP deprecation warnings in app build script.
 app = repo / 'app' / 'build.gradle.kts'
 if app.exists():
